@@ -1,0 +1,36 @@
+# --- Secretos: nunca al repositorio -----------------------------------------
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# --- Claude Code: configuración personal (la compartida sí se versiona) -----
+.claude/settings.local.json
+
+# --- Salidas del programa (pueden contener datos de clientes) ---------------
+exports/
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+p6env
+p6env/
+
+# --- Herramientas -----------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Sistema / editores -----------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

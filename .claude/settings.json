@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/*.pem)",
+      "Read(./secrets/**)",
+      "Read(~/AppData/Roaming/p6cli/**)",
+      "Read(~/AppData/Local/p6cli/**)",
+      "Read(~/.config/p6cli/**)",
+      "Read(~/Library/Application Support/p6cli/**)",
+      "Bash(p6:*)",
+      "Bash(python -m p6cli:*)",
+      "Bash(py -m p6cli:*)",
+      "Bash(curl:*)",
+      "Bash(curl.exe:*)",
+      "Bash(wget:*)"
+    ]
+  }
+}
