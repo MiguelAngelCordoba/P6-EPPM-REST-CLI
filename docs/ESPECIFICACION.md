@@ -343,7 +343,7 @@ Clave    : ••••••••
 ```
 Nombre del ambiente (ej. cliente-prod): 
 URL de P6 Web Services (pega la URL completa): 
-  → Host: https://p6ws.example.com · Contexto: p6ws   ¿Correcto? (S/n)
+  → Host: https://p6ws.example.com · Contexto: p6ws   ¿Correcto? (Y/n)
 DatabaseName: 
 Usuario: 
 Clave: (oculta)
@@ -573,3 +573,15 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | mypy `strict` en todo `src` | mypy no admite `strict` por módulo; activarlo globalmente cubre `core`. Si `cli` lo necesita, se relaja solo `p6cli.cli.*` |
 | `ruff format` no formatea `*.md` | Los bloques de código de la documentación conservan su alineación manual |
 | `p6` sin argumentos muestra un aviso en español (desde `cli/messages.py`, salida 0) hasta que existan los menús en M5 | Evita un comportamiento a medias; el texto ya queda centralizado |
+| Asistente de `p6 profiles add`/`edit` con `typer.prompt` | El `Prompter` es alcance de M5 |
+| Confirmaciones sí/no siempre con el estándar en inglés `(Y/n)` / `(y/N)`: solo se acepta `y` o `n` (mayúscula o minúscula), nunca `s`, `si`, `yes` ni `no`. La pregunta de TLS usa `y` · `n` · `ca` | Estándar de terminal; una sola respuesta válida por opción no deja margen al error |
+| Los textos del programa van en español; los mensajes técnicos estándar de las librerías (p. ej. `Aborted!` de Typer al pulsar Ctrl+C) se dejan en inglés y no se traducen | Son convenciones reconocibles de la terminal |
+| `p6 profiles edit NAME` repite el asistente con los valores actuales por defecto y muestra al inicio un único aviso: Enter conserva el valor actual. Permite renombrar (la clave se mueve en el keyring) | Una sola forma de capturar datos; renombrar no obliga a reescribir la clave |
+| Al eliminar el perfil predeterminado, queda sin predeterminado; si el almacén queda vacío, el próximo perfil creado vuelve a serlo | Nunca se promueve en silencio un ambiente (quizá productivo) a predeterminado |
+| `timeout`, `id_chunk_size` y `throttle_seconds` solo se editan en `profiles.toml`; se validan al leerlo y `edit` los conserva | Son ajustes avanzados; el asistente se mantiene corto como en §10.3 |
+| Campos desconocidos en `profiles.toml` son error; un `default` que apunta a un perfil inexistente se ignora | Un error de tipeo (`timout`) no debe pasar en silencio; un `default` huérfano no bloquea el uso |
+| Las excepciones de `core` llevan un `motivo` (enum) y datos no sensibles; `cli/messages.py` los traduce a texto. `ConfigError`, `ProfileError` y `SecretStoreError` salen con código 2 | Los textos viven en un solo lugar y `core` no conoce la interfaz |
+| URL con usuario o clave incrustados (`https://u:c@host`) se rechaza sin repetirla en el error; la URL de la interfaz web (`/p6/...`) se rechaza y se vuelve a pedir | Evita filtrar secretos y guardar una URL que no es la API |
+| `verify_ssl` con CA propia: el asistente exige que el `.pem` exista y guarda la ruta absoluta; el archivo no se lee | La ruta sigue sirviendo desde cualquier directorio de trabajo |
+| `profiles list` muestra `••••••••` si hay clave, `(sin clave)` si no, y `(keyring no disponible)` sin fallar si no hay backend | El listado siempre funciona y nunca revela la clave ni su longitud |
+| Crear un perfil guarda la clave antes que el TOML y la revierte si falla el archivo; editar revierte el TOML si falla el keyring | Archivo y keyring no quedan desincronizados |
