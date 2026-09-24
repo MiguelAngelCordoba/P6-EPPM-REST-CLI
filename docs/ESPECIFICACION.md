@@ -548,6 +548,8 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 
 **Desarrollo:** `pytest`, `pytest-cov`, `responses`, `ruff`, `mypy`, `types-requests`, `pre-commit`.
 
+**Build:** `hatchling` (backend de `pyproject.toml`; no es dependencia de ejecución).
+
 ---
 
 ## 18. Registro de decisiones
@@ -564,3 +566,7 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | Diagnóstico exige JSON + canario | Evita falsos positivos de proxies, interfaz web y servlets comodín |
 | Textos de interfaz en español, centralizados | Uso personal; traducción futura en un solo archivo |
 | Nombres: repo `p6-eppm-rest-cli`, paquete `p6cli`, comando `p6` | Descriptivos y cortos |
+| Backend de build `hatchling`; versión única en `src/p6cli/__init__.py` (`[tool.hatch.version]`) | Configuración mínima para layout `src/`; la versión se define en un solo lugar |
+| Versión inicial `0.1.0`; llega a `1.0.0` en M9. El banner de §10.1 muestra `__version__`, no un valor fijo | Refleja que la v1 está en desarrollo |
+| CI solo con Python 3.14 (Windows y Ubuntu); se mantiene `requires-python = ">=3.11"` con ruff (`target-version = "py311"`) y mypy (`python_version = "3.11"`) apuntando a 3.11 | Menos jobs de CI; el lint y los tipos avisan si se usa algo que no existe en 3.11 |
+| `p6` sin argumentos muestra un aviso en español (desde `cli/messages.py`, salida 0) hasta que existan los menús en M5 | Evita un comportamiento a medias; el texto ya queda centralizado |
