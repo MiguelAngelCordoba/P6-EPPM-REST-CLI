@@ -13,7 +13,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | Hito | Nombre | Estado |
 |---|---|---|
 | M0 | Preparación del repositorio | ⬜ |
-| M1 | Esqueleto y calidad | ⬜ |
+| M1 | Esqueleto y calidad | ✅ |
 | M2 | Perfiles, secretos y URLs | ⬜ |
 | M3 | Autenticación y diagnóstico | ⬜ |
 | M4 | Catálogo, cliente y comandos básicos | ⬜ |
@@ -48,19 +48,19 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 
 Especificación: §3, §17.
 
-- [ ] `pyproject.toml` con layout `src/`, dependencias de §17 y extra `[dev]`.
-- [ ] Paquete `p6cli` con `__version__`, `__main__.py` y estructura de carpetas de §3 (módulos vacíos con docstring).
-- [ ] Comando `p6 --version` funcionando tras `pip install -e ".[dev]"`.
-- [ ] Configuración de `ruff`, `mypy` (strict en `core`) y `pytest` en `pyproject.toml`.
-- [ ] `.pre-commit-config.yaml` con ruff y **gitleaks** (escaneo de secretos).
-- [ ] GitHub Actions: lint, tipos y tests en cada push, en Windows y Ubuntu, más gitleaks.
-- [ ] Un test que verifique la versión.
+- [x] `pyproject.toml` con layout `src/`, dependencias de §17 y extra `[dev]`.
+- [x] Paquete `p6cli` con `__version__`, `__main__.py` y estructura de carpetas de §3 (módulos vacíos con docstring).
+- [x] Comando `p6 --version` funcionando tras `pip install -e ".[dev]"`.
+- [x] Configuración de `ruff`, `mypy` (strict en `core`) y `pytest` en `pyproject.toml`.
+- [x] `.pre-commit-config.yaml` con ruff y **gitleaks** (escaneo de secretos).
+- [x] GitHub Actions: lint, tipos y tests en cada push, en Windows y Ubuntu, más gitleaks.
+- [x] Un test que verifique la versión.
 
 **Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
 
 - Backend de build `hatchling`, versión única en `src/p6cli/__init__.py`.
 - Versión inicial `0.1.0`.
-- CI solo con Python 3.14 en Windows y Ubuntu; `requires-python = ">=3.11"` y ruff/mypy apuntando a 3.11.
+- Python 3.14+: `requires-python = ">=3.14"`, ruff/mypy apuntando a 3.14 y CI con 3.14 en Windows y Ubuntu.
 - `p6` sin argumentos muestra un aviso en español (salida 0) hasta M5.
 - `p6 --version` se verifica en tests con `CliRunner`; la prueba del comando instalado la haces tú a mano (Claude no ejecuta `p6`).
 
