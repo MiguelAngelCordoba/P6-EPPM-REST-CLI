@@ -94,7 +94,7 @@ p6-eppm-rest-cli/
 | `database_name` | str | — | Alias de la instancia |
 | `username` | str | — | |
 | `verify_ssl` | bool \| str | `true` | `true`, `false` o ruta a un `.pem` de CA propia |
-| `timeout` | int | `180` | Segundos por petición |
+| `timeout` | int | `180` | Segundos de lectura por petición. La conexión TCP/TLS tiene un límite fijo de 10 s |
 | `id_chunk_size` | int | `200` | ObjectId por lote en lecturas masivas y spread |
 | `throttle_seconds` | float | `0.5` | Pausa entre lotes consecutivos |
 
@@ -158,7 +158,9 @@ Esquema: **Username Token Profile** (autenticación HTTP estándar de P6).
 - **Login:** `POST {base}/login?DatabaseName={db}` con cabeceras `username`, `password`, `authToken` y `Accept: */*`. Éxito = 200. La sesión HTTP conserva las cookies que devuelva el servidor.
 - **Cada GET:** cabeceras `authToken` y `Accept: application/json`; query param `DatabaseName` siempre presente.
 - **Logout:** `POST {base}/logout` al salir o al cambiar de ambiente. Sus fallos se ignoran.
-- Un solo login por perfil en cada ejecución. **Sin reintentos automáticos.**
+- Un solo login por perfil en cada ejecución. **Sin reintentos automáticos.** Cada `Sesion` admite un único intento: un segundo `login()` falla sin enviar nada.
+- Ninguna petición sigue redirecciones (`allow_redirects=False`): requests reenviaría las cabeceras `username`, `password` y `authToken` al destino.
+- Timeout `(10, perfil.timeout)`: 10 s para conectar, el timeout del perfil para leer.
 - Nunca se registran cabeceras ni cuerpos de login en logs o excepciones.
 
 ---
@@ -167,7 +169,7 @@ Esquema: **Username Token Profile** (autenticación HTTP estándar de P6).
 
 Se ejecuta al agregar o editar un perfil, al actualizar credenciales y con `p6 doctor`. Realiza **un** intento de login; el usuario debe saberlo, porque cuenta para el bloqueo de cuentas.
 
-**Pasos:** DNS → TCP → TLS → `POST /login` → `GET /project/fields` → `POST` a una ruta canario inexistente (`/__p6cli_canary__`).
+**Pasos:** DNS → TCP → TLS → `POST /login` → `GET /project/fields` → `GET` a una ruta canario inexistente (`/__p6cli_canary__`). El canario usa GET para respetar la regla de solo lectura; el servlet comodín responde 405 a GET, que también es distinto de 404. DNS, TCP y TLS se deducen del error de red del primer paso que falle, y ese error corta la secuencia.
 
 **Clasificación** (se evalúa en este orden):
 
@@ -187,7 +189,7 @@ Se ejecuta al agregar o editar un perfil, al actualizar credenciales y con `p6 d
 
 `GET /project/fields` con 200 **no** prueba autenticación: responde aun con DatabaseName inválido. El éxito exige las tres condiciones de la fila 10.
 
-**Resultado:** `DiagnosticReport` con `status`, `message`, `suggestion` y la lista de pasos observados (método, URL sin credenciales, código, content-type, tamaño y fragmento del cuerpo).
+**Resultado:** `DiagnosticReport` con `status`, `detalle` (datos no sensibles: mensaje de P6, código, content-type, fragmento), `causa_red` (cuando no hubo respuesta) y la lista de pasos observados (método, URL sin credenciales, código, content-type, tamaño y fragmento del cuerpo). El mensaje y la sugerencia al usuario los arma `cli/messages.py` a partir de `status` o `causa_red`. Un tiempo de lectura agotado se reporta como `UNKNOWN`.
 
 ---
 
@@ -585,3 +587,14 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | `verify_ssl` con CA propia: el asistente exige que el `.pem` exista y guarda la ruta absoluta; el archivo no se lee | La ruta sigue sirviendo desde cualquier directorio de trabajo |
 | `profiles list` muestra `••••••••` si hay clave, `(sin clave)` si no, y `(keyring no disponible)` sin fallar si no hay backend | El listado siempre funciona y nunca revela la clave ni su longitud |
 | Crear un perfil guarda la clave antes que el TOML y la revierte si falla el archivo; editar revierte el TOML si falla el keyring | Archivo y keyring no quedan desincronizados |
+| El canario del diagnóstico se consulta con GET, no con POST | Los únicos POST permitidos son `/login` y `/logout` (regla de solo lectura); el comodín responde 405 a GET, así que se sigue detectando |
+| Si la prueba de conexión falla en `profiles add`/`edit`: `c` corregir · `g` guardar de todas formas · `x` cancelar (por defecto `c`); otra respuesta repregunta | Mismo estilo que la pregunta de TLS mientras no exista el `Prompter` (M5). Corregir reabre el asistente con lo escrito; Enter conserva la clave |
+| Timeout `(10, perfil.timeout)`: conexión fija de 10 s, lectura con el timeout del perfil | Con un puerto filtrado, el diagnóstico no espera los 180 s de lectura |
+| `p6 doctor` sin clave guardada la pide oculta, la usa solo para esa prueba y no la guarda | El diagnóstico no modifica el keyring; para guardarla está `p6 profiles edit` |
+| `DiagnosticReport` no guarda textos: `status`, `detalle` y `causa_red`; mensaje y sugerencia viven en `cli/messages.py` | Misma regla que los `motivo` de las excepciones: `core` no conoce la interfaz |
+| Ninguna petición de `Sesion` sigue redirecciones | requests solo quita `Authorization` al redirigir; reenviaría `username`, `password` y `authToken`. Además se ve el 302 hacia `/p6/action/login` |
+| Un único intento de login por instancia de `Sesion`; `diagnosticar(sesion)` usa ese intento y deja la sesión autenticada si el estado es OK | "Sin reintentos" queda garantizado por diseño, y M5 puede diagnosticar un login fallido sin volver a intentarlo |
+| DNS, TCP y TLS se deducen de la excepción de requests (`SSLError`, `socket.gaierror` en la cadena de causas, `ConnectionError`/`ConnectTimeout`), sin sondeos de socket aparte | Un sondeo propio fallaría detrás de un proxy corporativo que requests sí atraviesa |
+| `p6 doctor` hace logout al final si el login fue exitoso; el logout no aparece en los pasos | No deja sesiones abiertas en el servidor |
+| Salida de `p6 doctor`: `0` si OK, `1` con cualquier otro estado, `2` con errores de perfil, configuración o keyring | Códigos de §12 |
+| Los errores de red se lanzan como `P6HTTPError` fuera del `except`, sin `__cause__` ni `__context__` | La excepción de requests guarda la petición con sus cabeceras |

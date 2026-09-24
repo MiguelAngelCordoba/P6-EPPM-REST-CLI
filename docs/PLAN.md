@@ -15,7 +15,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M0 | Preparación del repositorio | ⬜ |
 | M1 | Esqueleto y calidad | ✅ |
 | M2 | Perfiles, secretos y URLs | ✅ |
-| M3 | Autenticación y diagnóstico | ⬜ |
+| M3 | Autenticación y diagnóstico | ✅ |
 | M4 | Catálogo, cliente y comandos básicos | ⬜ |
 | M5 | Flujo interactivo | ⬜ |
 | M6 | Lecturas masivas y spread | ⬜ |
@@ -96,11 +96,20 @@ Especificación: §4, §5.
 
 Especificación: §6, §7. Leer `APRENDIZAJES.md` completo antes de empezar.
 
-- [ ] `core/session.py`: login, cabeceras, cookies, logout; sin reintentos; sin secretos en logs ni excepciones.
-- [ ] `core/diagnostics.py`: pasos y clasificación de §7 en el orden exacto.
-- [ ] Fixtures en `tests/fixtures/` para cada caso de §16, y un test por cada estado de la tabla §7.
-- [ ] Comando `p6 doctor [NAME]` con reporte legible.
-- [ ] `p6 profiles add` y `edit` ejecutan la prueba de conexión y ofrecen corregir, guardar de todas formas o cancelar.
+- [x] `core/session.py`: login, cabeceras, cookies, logout; sin reintentos; sin secretos en logs ni excepciones.
+- [x] `core/diagnostics.py`: pasos y clasificación de §7 en el orden exacto.
+- [x] Fixtures en `tests/fixtures/` para cada caso de §16, y un test por cada estado de la tabla §7.
+- [x] Comando `p6 doctor [NAME]` con reporte legible.
+- [x] `p6 profiles add` y `edit` ejecutan la prueba de conexión y ofrecen corregir, guardar de todas formas o cancelar.
+
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- El canario se consulta con **GET**, no con POST: los únicos POST permitidos son `/login` y `/logout`.
+- Si la prueba de conexión falla en `add`/`edit`: `c` corregir · `g` guardar de todas formas · `x` cancelar (por defecto `c`).
+- Timeout `(10, perfil.timeout)`: 10 s fijos para conectar y el timeout del perfil para leer.
+- `p6 doctor` sin clave guardada la pide oculta, la usa solo para esa prueba y no la guarda.
+- `DiagnosticReport` no guarda textos; ninguna petición sigue redirecciones; un único intento de login por `Sesion`; DNS, TCP y TLS se deducen de la excepción de requests.
+- `tests/fixtures/project_fields.json` tiene una estructura ilustrativa: el formato real de `/fields` se confirma en M4.
 
 **Validación manual (tú):** `p6 doctor` contra tu instancia de pruebas y contra la productiva. Anota en `APRENDIZAJES.md` cualquier comportamiento nuevo, **anonimizado**.
 

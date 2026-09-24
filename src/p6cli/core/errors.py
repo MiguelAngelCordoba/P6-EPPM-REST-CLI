@@ -27,6 +27,7 @@ class MotivoPerfil(StrEnum):
     CAMPO_INVALIDO = "campo_invalido"
     NO_EXISTE = "no_existe"
     YA_EXISTE = "ya_existe"
+    SIN_PREDETERMINADO = "sin_predeterminado"
 
 
 class MotivoSecreto(StrEnum):
@@ -34,6 +35,22 @@ class MotivoSecreto(StrEnum):
 
     SIN_BACKEND = "sin_backend"
     ERROR_KEYRING = "error_keyring"
+
+
+class MotivoAuth(StrEnum):
+    """Motivos de un error de autenticación."""
+
+    LOGIN_YA_INTENTADO = "login_ya_intentado"
+    CLAVE_NO_CODIFICABLE = "clave_no_codificable"
+
+
+class MotivoHTTP(StrEnum):
+    """Motivos de un error de comunicación con P6."""
+
+    SIN_RESOLUCION = "sin_resolucion"
+    SIN_CONEXION = "sin_conexion"
+    TLS = "tls"
+    TIEMPO_AGOTADO = "tiempo_agotado"
 
 
 class P6CliError(Exception):
@@ -56,3 +73,11 @@ class ProfileError(P6CliError):
 
 class SecretStoreError(P6CliError):
     """Fallo del almacén de credenciales del sistema operativo."""
+
+
+class AuthError(P6CliError):
+    """Login no permitido o imposible de enviar."""
+
+
+class P6HTTPError(P6CliError):
+    """Fallo de comunicación con P6. Lleva método y URL, nunca cabeceras."""
