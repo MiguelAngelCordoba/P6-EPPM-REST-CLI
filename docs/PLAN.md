@@ -14,7 +14,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 |---|---|---|
 | M0 | Preparación del repositorio | ⬜ |
 | M1 | Esqueleto y calidad | ✅ |
-| M2 | Perfiles, secretos y URLs | ⬜ |
+| M2 | Perfiles, secretos y URLs | ✅ |
 | M3 | Autenticación y diagnóstico | ⬜ |
 | M4 | Catálogo, cliente y comandos básicos | ⬜ |
 | M5 | Flujo interactivo | ⬜ |
@@ -72,13 +72,21 @@ Especificación: §3, §17.
 
 Especificación: §4, §5.
 
-- [ ] `core/urls.py`: normalización con todos los casos de la tabla §5 como tests.
-- [ ] `core/profiles.py`: `Profile`, validación de nombre, `ProfileStore` con lectura/escritura TOML atómica y perfil predeterminado.
-- [ ] `core/secrets.py`: guardar, leer, borrar y renombrar en keyring; error claro sin backend.
-- [ ] `core/config.py`: resolución del directorio de configuración con `P6CLI_CONFIG_DIR`.
-- [ ] Comandos: `p6 profiles list | add | edit | remove | default` (sin prueba de conexión todavía).
-- [ ] Contraseña enmascarada en todo listado.
-- [ ] Tests con keyring en memoria y directorio temporal.
+- [x] `core/urls.py`: normalización con todos los casos de la tabla §5 como tests.
+- [x] `core/profiles.py`: `Profile`, validación de nombre, `ProfileStore` con lectura/escritura TOML atómica y perfil predeterminado.
+- [x] `core/secrets.py`: guardar, leer, borrar y renombrar en keyring; error claro sin backend.
+- [x] `core/config.py`: resolución del directorio de configuración con `P6CLI_CONFIG_DIR`.
+- [x] Comandos: `p6 profiles list | add | edit | remove | default` (sin prueba de conexión todavía).
+- [x] Contraseña enmascarada en todo listado.
+- [x] Tests con keyring en memoria y directorio temporal.
+
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- El asistente de `add`/`edit` usa `typer.prompt`; el `Prompter` sigue en M5.
+- `edit NAME` repite el asistente con los valores actuales por defecto, con un único aviso inicial de que Enter conserva cada valor; permite renombrar (mueve la clave).
+- Confirmaciones siempre `(Y/n)` / `(y/N)`, solo `y` o `n` (ajuste pedido tras la prueba manual).
+- Al eliminar el perfil predeterminado no se promueve otro: queda sin predeterminado.
+- `timeout`, `id_chunk_size` y `throttle_seconds` no se piden en ningún comando: se editan en `profiles.toml` y se validan al leerlo.
 
 **Practica de Claude Code:** pedir los tests primero y luego la implementación (TDD guiado).
 
