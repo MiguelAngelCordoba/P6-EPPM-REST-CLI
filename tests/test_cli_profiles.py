@@ -1,17 +1,26 @@
-"""Comandos ``p6 profiles ...`` (especificación §12, sin prueba de conexión hasta M3)."""
+"""Comandos ``p6 profiles ...`` (especificación §12) y su prueba de conexión (§10.3)."""
 
 from pathlib import Path
 
 import pytest
+import responses
 from typer.testing import CliRunner, Result
 
 from p6cli.cli import messages
 from p6cli.cli.app import app
 from p6cli.core import profiles, secrets
 from p6cli.core.profiles import Profile, ProfileStore
+from tests.conftest import LOGIN_OK, LOGIN_RECHAZADO, Simulada, llamadas, registrar_p6
 
 CLAVE = "ClaveDePrueba1"
 MASCARA = "••••••••"
+
+# Bases de Web Services que usan los tests de este archivo.
+BASES = (
+    "https://localhost:7001/p6ws/restapi",
+    "https://p6ws.example.com/p6ws/restapi",
+    "http://p6ws.example.com/p6ws/restapi",
+)
 
 runner = CliRunner()
 
@@ -20,6 +29,20 @@ runner = CliRunner()
 def terminal_ancha(monkeypatch: pytest.MonkeyPatch) -> None:
     """Evita que rich recorte columnas en la salida capturada."""
     monkeypatch.setenv("COLUMNS", "200")
+
+
+@pytest.fixture(autouse=True)
+def p6_conecta(http_simulado: responses.RequestsMock) -> None:
+    """Por defecto la prueba de conexión de add/edit tiene éxito."""
+    for base in BASES:
+        registrar_p6(http_simulado, base=base)
+
+
+def logins(simulado: responses.RequestsMock, *resultados: Simulada) -> None:
+    """Reemplaza el escenario: cada prueba de conexión recibe el siguiente login de la lista."""
+    simulado.reset()
+    for resultado in resultados:
+        registrar_p6(simulado, login=resultado)
 
 
 def invocar(*argumentos: str, entrada: str | None = None) -> Result:
@@ -317,6 +340,93 @@ def test_add_segundo_perfil_no_es_predeterminado() -> None:
     assert ProfileStore().predeterminado() == "demo"
 
 
+# --- add: prueba de conexión --------------------------------------------------
+
+
+def test_add_prueba_la_conexion_antes_de_guardar(http_simulado: responses.RequestsMock) -> None:
+    resultado = invocar("add", entrada=ALTA_DEMO)
+
+    assert resultado.exit_code == 0
+    assert messages.PROBANDO_CONEXION.format(nombre="demo") in resultado.output
+    assert messages.CONEXION_EXITOSA in resultado.output
+    assert llamadas(http_simulado, "POST", "/login") == 1
+    assert messages.PREGUNTA_FALLO_CONEXION not in resultado.output
+
+
+def test_add_fallo_muestra_diagnostico_y_cancelar_no_guarda(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO)
+
+    resultado = invocar("add", entrada=ALTA_DEMO + respuestas("x"))
+
+    assert resultado.exit_code == 0
+    assert "CREDENTIALS_REJECTED" in resultado.output
+    assert "No se reintentará" in resultado.output
+    assert messages.CANCELADO in resultado.output
+    assert ProfileStore().listar() == []
+    assert secrets.leer_clave("demo") is None
+    assert llamadas(http_simulado, "POST", "/login") == 1
+
+
+def test_add_fallo_guardar_de_todas_formas(http_simulado: responses.RequestsMock) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO)
+
+    resultado = invocar("add", entrada=ALTA_DEMO + respuestas("g"))
+
+    assert resultado.exit_code == 0
+    assert ProfileStore().obtener("demo") == perfil()
+    assert secrets.leer_clave("demo") == CLAVE
+    assert llamadas(http_simulado, "POST", "/login") == 1
+
+
+def test_add_fallo_corregir_reabre_el_asistente_con_lo_escrito(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO, LOGIN_OK)
+    # Corrige solo el DatabaseName; Enter conserva el resto, incluida la clave escrita.
+    correccion = respuestas("c", "", "", "", "P6EPPM", "", "", "")
+
+    resultado = invocar("add", entrada=ALTA_DEMO + correccion)
+
+    assert resultado.exit_code == 0, resultado.output
+    assert messages.AVISO_EDITAR in resultado.output
+    assert ProfileStore().obtener("demo") == perfil(database_name="P6EPPM")
+    assert secrets.leer_clave("demo") == CLAVE
+    assert llamadas(http_simulado, "POST", "/login") == 2
+
+
+def test_add_fallo_enter_elige_corregir(http_simulado: responses.RequestsMock) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO, LOGIN_OK)
+
+    resultado = invocar("add", entrada=ALTA_DEMO + respuestas("", "", "", "", "", "", "", ""))
+
+    assert resultado.exit_code == 0
+    assert messages.AVISO_EDITAR in resultado.output
+    assert llamadas(http_simulado, "POST", "/login") == 2
+
+
+@pytest.mark.parametrize("invalida", ["s", "si", "y", "guardar"])
+def test_add_fallo_opcion_invalida_repregunta(
+    http_simulado: responses.RequestsMock, invalida: str
+) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO)
+
+    resultado = invocar("add", entrada=ALTA_DEMO + respuestas(invalida, "x"))
+
+    assert resultado.exit_code == 0
+    assert messages.OPCION_FALLO_INVALIDA in resultado.output
+    assert ProfileStore().listar() == []
+
+
+def test_add_fallo_no_muestra_la_clave(http_simulado: responses.RequestsMock) -> None:
+    logins(http_simulado, LOGIN_RECHAZADO)
+
+    resultado = invocar("add", entrada=ALTA_DEMO + respuestas("x"))
+
+    assert CLAVE not in resultado.output
+
+
 # --- edit -------------------------------------------------------------------
 
 CONSERVAR_TODO = respuestas("", "", "", "", "", "", "")
@@ -396,6 +506,80 @@ def test_edit_inexistente_sale_con_2() -> None:
 
     assert resultado.exit_code == 2
     assert "nada" in resultado.output
+
+
+# --- edit: prueba de conexión --------------------------------------------------
+
+
+def test_edit_prueba_con_la_clave_guardada(http_simulado: responses.RequestsMock) -> None:
+    crear("demo")
+
+    resultado = invocar("edit", "demo", entrada=CONSERVAR_TODO)
+
+    assert resultado.exit_code == 0
+    assert http_simulado.calls[0].request.headers["password"] == CLAVE
+
+
+def test_edit_prueba_con_la_clave_nueva(http_simulado: responses.RequestsMock) -> None:
+    crear("demo")
+    entrada = respuestas("", "", "", "", "", "ClaveNueva2", "")
+
+    resultado = invocar("edit", "demo", entrada=entrada)
+
+    assert resultado.exit_code == 0
+    assert http_simulado.calls[0].request.headers["password"] == "ClaveNueva2"
+
+
+def test_edit_sin_clave_guardada_la_exige(http_simulado: responses.RequestsMock) -> None:
+    crear("demo", clave=None)
+    entrada = CONSERVAR_TODO + respuestas("", CLAVE)
+
+    resultado = invocar("edit", "demo", entrada=entrada)
+
+    assert resultado.exit_code == 0, resultado.output
+    assert messages.CLAVE_REQUERIDA_PRUEBA in resultado.output
+    assert messages.CLAVE_VACIA in resultado.output
+    assert secrets.leer_clave("demo") == CLAVE
+
+
+def test_edit_fallo_cancelar_no_cambia_nada(http_simulado: responses.RequestsMock) -> None:
+    crear("demo")
+    logins(http_simulado, LOGIN_RECHAZADO)
+    entrada = respuestas("", "", "", "P6EPPM", "", "", "", "x")
+
+    resultado = invocar("edit", "demo", entrada=entrada)
+
+    assert resultado.exit_code == 0
+    assert messages.CANCELADO in resultado.output
+    assert ProfileStore().obtener("demo") == perfil()
+
+
+def test_edit_fallo_guardar_de_todas_formas(http_simulado: responses.RequestsMock) -> None:
+    crear("demo")
+    logins(http_simulado, LOGIN_RECHAZADO)
+    entrada = respuestas("", "", "", "P6EPPM", "", "", "", "g")
+
+    resultado = invocar("edit", "demo", entrada=entrada)
+
+    assert resultado.exit_code == 0
+    assert ProfileStore().obtener("demo").database_name == "P6EPPM"
+
+
+def test_edit_corregir_puede_volver_al_nombre_original(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear("demo")
+    logins(http_simulado, LOGIN_RECHAZADO, LOGIN_OK)
+    renombrar = respuestas("nuevo", "", "", "", "", "", "")
+    volver = respuestas("c", "demo", "", "", "", "", "", "")
+
+    resultado = invocar("edit", "demo", entrada=renombrar + volver)
+
+    assert resultado.exit_code == 0, resultado.output
+    assert "Ya existe" not in resultado.output
+    assert [p.name for p in ProfileStore().listar()] == ["demo"]
+    assert secrets.leer_clave("demo") == CLAVE
+    assert llamadas(http_simulado, "POST", "/login") == 2
 
 
 # --- remove -----------------------------------------------------------------

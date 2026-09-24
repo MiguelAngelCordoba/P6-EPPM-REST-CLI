@@ -3,14 +3,17 @@
 import dataclasses
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
 
 from p6cli import __version__
 from p6cli.cli import messages, render
 from p6cli.core import profiles, secrets
+from p6cli.core.diagnostics import DiagnosticReport, EstadoDiagnostico, probar_conexion
 from p6cli.core.errors import (
     ConfigError,
     MotivoPerfil,
@@ -21,7 +24,8 @@ from p6cli.core.errors import (
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.urls import AdvertenciaUrl, normalizar_url
 
-# Código de salida para errores de uso o configuración (especificación §12).
+# Códigos de salida (especificación §12).
+SALIDA_ERROR_P6 = 1
 SALIDA_ERROR_USO = 2
 
 app = typer.Typer(help=messages.AYUDA_APP, add_completion=False)
@@ -109,13 +113,14 @@ def _pedir_texto(texto: str, actual: str | None) -> str:
         typer.echo(messages.DATO_OBLIGATORIO, err=True)
 
 
-def _pedir_nombre(store: ProfileStore, actual: str | None) -> str:
+def _pedir_nombre(store: ProfileStore, actual: str | None, nombre_original: str | None) -> str:
+    """Pide el nombre. ``nombre_original`` (perfil que se edita) no cuenta como duplicado."""
     existentes = {perfil.name for perfil in store.listar()}
     while True:
         nombre = _pedir_texto(messages.PEDIR_NOMBRE, actual)
         try:
             profiles.validar_nombre(nombre)
-            if nombre != actual and nombre in existentes:
+            if nombre != nombre_original and nombre in existentes:
                 raise ProfileError(MotivoPerfil.YA_EXISTE, nombre=nombre)
         except ProfileError as error:
             typer.echo(_texto_error(error), err=True)
@@ -144,10 +149,10 @@ def _pedir_oculto(texto: str) -> str:
     return str(typer.prompt(texto, default="", show_default=False, hide_input=True))
 
 
-def _pedir_clave_nueva() -> str:
+def _pedir_clave_nueva(texto: str = messages.PEDIR_CLAVE) -> str:
     """Pide la clave oculta; no se acepta vacía."""
     while True:
-        clave = _pedir_oculto(messages.PEDIR_CLAVE)
+        clave = _pedir_oculto(texto)
         if clave:
             return clave
         typer.echo(messages.CLAVE_VACIA, err=True)
@@ -186,10 +191,16 @@ def _pedir_tls(actual: bool | str) -> bool | str:
 
 
 def _asistente_perfil[T](
-    store: ProfileStore, actual: Profile | None, pedir_clave: Callable[[], T]
+    store: ProfileStore,
+    actual: Profile | None,
+    nombre_original: str | None,
+    pedir_clave: Callable[[], T],
 ) -> tuple[Profile, T]:
-    """Pide los datos de un perfil (§10.3). Con ``actual``, sus valores son los predeterminados."""
-    nombre = _pedir_nombre(store, actual.name if actual else None)
+    """Pide los datos de un perfil (§10.3). Con ``actual``, sus valores son los predeterminados.
+
+    ``nombre_original`` es el nombre guardado del perfil que se edita (``None`` al agregar).
+    """
+    nombre = _pedir_nombre(store, actual.name if actual else None, nombre_original)
     host, context = _pedir_url(actual)
     database_name = _pedir_texto(messages.PEDIR_DATABASE, actual.database_name if actual else None)
     username = _pedir_texto(messages.PEDIR_USUARIO, actual.username if actual else None)
@@ -216,6 +227,41 @@ def _asistente_perfil[T](
             verify_ssl=verify_ssl,
         )
     return perfil, clave
+
+
+# --- Prueba de conexión ---------------------------------------------------------
+
+
+class _Decision(Enum):
+    GUARDAR = "guardar"
+    CORREGIR = "corregir"
+    CANCELAR = "cancelar"
+
+
+def _probar(perfil: Profile, clave: str) -> DiagnosticReport:
+    """Avisa del intento de login y ejecuta la prueba de conexión (§7)."""
+    typer.echo(messages.PROBANDO_CONEXION.format(nombre=perfil.name))
+    with Console().status(messages.ESPERANDO_RESPUESTA):
+        return probar_conexion(perfil, clave)
+
+
+def _probar_y_decidir(perfil: Profile, clave: str) -> _Decision:
+    """Prueba la conexión; si falla, muestra el diagnóstico y pregunta qué hacer (§10.3)."""
+    reporte = _probar(perfil, clave)
+    if reporte.status is EstadoDiagnostico.OK:
+        typer.echo(messages.CONEXION_EXITOSA)
+        return _Decision.GUARDAR
+    render.reporte_diagnostico(reporte)
+    opciones = {
+        messages.OPCION_CORREGIR: _Decision.CORREGIR,
+        messages.OPCION_GUARDAR: _Decision.GUARDAR,
+        messages.OPCION_CANCELAR: _Decision.CANCELAR,
+    }
+    while True:
+        opcion = _pedir_texto(messages.PREGUNTA_FALLO_CONEXION, messages.OPCION_CORREGIR)
+        if opcion.lower() in opciones:
+            return opciones[opcion.lower()]
+        typer.echo(messages.OPCION_FALLO_INVALIDA, err=True)
 
 
 # --- Comandos de perfiles -------------------------------------------------------
@@ -245,10 +291,21 @@ def listar_perfiles() -> None:
 
 @perfiles_app.command("add", help=messages.AYUDA_PERFILES_ADD)
 def agregar_perfil() -> None:
-    """Asistente para agregar un perfil. La clave nunca se recibe por flag."""
+    """Asistente para agregar un perfil. La clave nunca se recibe por flag.
+
+    Antes de guardar se prueba la conexión; si falla, el usuario decide si corrige, guarda
+    de todas formas o cancela. Cada nueva prueba ocurre solo porque el usuario lo pidió.
+    """
     with _errores_a_salida():
         store = ProfileStore()
-        perfil, clave = _asistente_perfil(store, None, _pedir_clave_nueva)
+        perfil, clave = _asistente_perfil(store, None, None, _pedir_clave_nueva)
+        while (decision := _probar_y_decidir(perfil, clave)) is _Decision.CORREGIR:
+            typer.echo(messages.AVISO_EDITAR)
+            perfil, otra_clave = _asistente_perfil(store, perfil, None, _pedir_clave_opcional)
+            clave = otra_clave or clave
+        if decision is _Decision.CANCELAR:
+            typer.echo(messages.CANCELADO)
+            return
         profiles.crear_perfil(store, perfil, clave)
         mensaje = (
             messages.PERFIL_GUARDADO_PREDETERMINADO
@@ -260,13 +317,31 @@ def agregar_perfil() -> None:
 
 @perfiles_app.command("edit", help=messages.AYUDA_PERFILES_EDIT)
 def editar_perfil(name: ArgumentoNombre) -> None:
-    """Repite el asistente con los valores actuales como predeterminados."""
+    """Repite el asistente con los valores actuales como predeterminados.
+
+    La prueba de conexión usa la clave nueva o, si se conservó, la guardada.
+    """
     with _errores_a_salida():
         store = ProfileStore()
         actual = store.obtener(name)
         typer.echo(messages.AVISO_EDITAR)
-        perfil, clave = _asistente_perfil(store, actual, _pedir_clave_opcional)
-        profiles.editar_perfil(store, name, perfil, clave)
+        perfil, clave_nueva = _asistente_perfil(store, actual, name, _pedir_clave_opcional)
+        clave_guardada = secrets.leer_clave(name)
+        while True:
+            clave_prueba = clave_nueva or clave_guardada
+            if clave_prueba is None:
+                typer.echo(messages.CLAVE_REQUERIDA_PRUEBA)
+                clave_nueva = clave_prueba = _pedir_clave_nueva()
+            decision = _probar_y_decidir(perfil, clave_prueba)
+            if decision is not _Decision.CORREGIR:
+                break
+            typer.echo(messages.AVISO_EDITAR)
+            perfil, otra_clave = _asistente_perfil(store, perfil, name, _pedir_clave_opcional)
+            clave_nueva = otra_clave or clave_nueva
+        if decision is _Decision.CANCELAR:
+            typer.echo(messages.CANCELADO)
+            return
+        profiles.editar_perfil(store, name, perfil, clave_nueva)
         typer.echo(messages.PERFIL_ACTUALIZADO.format(nombre=perfil.name))
 
 
@@ -297,3 +372,27 @@ def marcar_predeterminado(name: ArgumentoNombre) -> None:
     with _errores_a_salida():
         ProfileStore().marcar_predeterminado(name)
         typer.echo(messages.PREDETERMINADO_MARCADO.format(nombre=name))
+
+
+# --- Diagnóstico ----------------------------------------------------------------
+
+
+@app.command("doctor", help=messages.AYUDA_DOCTOR)
+def doctor(
+    name: Annotated[str | None, typer.Argument(help=messages.AYUDA_ARG_NOMBRE_DOCTOR)] = None,
+) -> None:
+    """Prueba de conexión con diagnóstico. Sale con 0 si conecta y con 1 si no."""
+    with _errores_a_salida():
+        store = ProfileStore()
+        nombre = name if name is not None else store.predeterminado()
+        if nombre is None:
+            raise ProfileError(MotivoPerfil.SIN_PREDETERMINADO)
+        perfil = store.obtener(nombre)
+        clave = secrets.leer_clave(perfil.name)
+        if clave is None:
+            typer.echo(messages.AVISO_CLAVE_NO_GUARDADA.format(nombre=perfil.name))
+            clave = _pedir_clave_nueva(messages.PEDIR_CLAVE_DOCTOR)
+        reporte = _probar(perfil, clave)
+        render.reporte_diagnostico(reporte)
+        if reporte.status is not EstadoDiagnostico.OK:
+            raise typer.Exit(code=SALIDA_ERROR_P6)
