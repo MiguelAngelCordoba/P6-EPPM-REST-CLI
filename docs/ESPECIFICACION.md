@@ -568,5 +568,8 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | Nombres: repo `p6-eppm-rest-cli`, paquete `p6cli`, comando `p6` | Descriptivos y cortos |
 | Backend de build `hatchling`; versión única en `src/p6cli/__init__.py` (`[tool.hatch.version]`) | Configuración mínima para layout `src/`; la versión se define en un solo lugar |
 | Versión inicial `0.1.0`; llega a `1.0.0` en M9. El banner de §10.1 muestra `__version__`, no un valor fijo | Refleja que la v1 está en desarrollo |
-| CI solo con Python 3.14 (Windows y Ubuntu); se mantiene `requires-python = ">=3.11"` con ruff (`target-version = "py311"`) y mypy (`python_version = "3.11"`) apuntando a 3.11 | Menos jobs de CI; el lint y los tipos avisan si se usa algo que no existe en 3.11 |
+| Python 3.14+: `requires-python = ">=3.14"`, ruff (`target-version = "py314"`) y mypy (`python_version = "3.14"`); CI con 3.14 en Windows y Ubuntu | La CI solo prueba 3.14; declarar soporte para versiones anteriores prometería algo que no se prueba |
+| Identificadores en español (ASCII, sin tildes ni ñ), salvo los nombres que esta especificación ya fija (archivos de §3, `Profile`, `ProfileStore`, `P6CliError`, `Prompter`, `get_all`, comandos, `__version__`) | Coherencia con la documentación sin reescribir lo ya especificado |
+| mypy `strict` en todo `src` | mypy no admite `strict` por módulo; activarlo globalmente cubre `core`. Si `cli` lo necesita, se relaja solo `p6cli.cli.*` |
+| `ruff format` no formatea `*.md` | Los bloques de código de la documentación conservan su alineación manual |
 | `p6` sin argumentos muestra un aviso en español (desde `cli/messages.py`, salida 0) hasta que existan los menús en M5 | Evita un comportamiento a medias; el texto ya queda centralizado |

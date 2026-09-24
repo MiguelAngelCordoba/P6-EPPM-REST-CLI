@@ -41,8 +41,8 @@ src/p6cli/
 
 ## Convenciones
 
-- Python 3.11+, layout `src/`, empaquetado con `pyproject.toml`.
-- **Código, identificadores, comentarios, docstrings y mensajes de commit en inglés.** Documentación (`docs/`, `README.md`, este archivo) en español. Textos de interfaz en español.
+- Python 3.14+, layout `src/`, empaquetado con `pyproject.toml`.
+- **Identificadores, comentarios, docstrings y mensajes de commit en español.** Documentación (`docs/`, `README.md`, este archivo) en español. Textos de interfaz en español tambien.
 - Type hints en todo el código; `mypy --strict` sobre `src/p6cli/core`.
 - `ruff` para lint y formato.
 - Commits con Conventional Commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
