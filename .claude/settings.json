@@ -2,16 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(pytest:*)",
-      "Bash(python -m pytest:*)",
+      "Bash(p6env/Scripts/python -m pytest:*)",
+      "Bash(p6env/Scripts/py -m pytest:*)",
       "Bash(ruff:*)",
-      "Bash(python -m ruff:*)",
+      "Bash(p6env/Scripts/python -m ruff:*)",
+      "Bash(p6env/Scripts/py -m ruff:*)",
       "Bash(mypy:*)",
-      "Bash(python -m mypy:*)",
+      "Bash(p6env/Scripts/python -m mypy:*)",
+      "Bash(p6env/Scripts/py -m mypy:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
       "Bash(git log:*)"
     ],
     "deny": [
+      "Bash(pip install:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(py -m pip install:*)",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./**/*.pem)",

@@ -47,6 +47,15 @@ src/p6cli/
 - `ruff` para lint y formato.
 - Commits con Conventional Commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
 
+## Entorno virtual
+
+- El proyecto usa un entorno virtual en `p6env/` (ignorado por git). Todo se instala y ejecuta dentro de él.
+- **Nunca uses `pip`, `python` ni `pytest` a secas.** Usa siempre el intérprete del entorno por ruta explícita:
+  - Windows: `p6env/Scripts/python -m pip install ...`, `p6env/Scripts/python -m pytest`
+  - Linux/macOS: `p6env/bin/python -m ...`
+- Nunca instales paquetes fuera de `p6env`, ni con `--user`, ni globales.
+- Si `p6env` no existe, no lo crees por tu cuenta: avísame.
+
 ## Comandos
 
 ```bash
