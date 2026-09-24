@@ -56,6 +56,14 @@ Especificación: §3, §17.
 - [ ] GitHub Actions: lint, tipos y tests en cada push, en Windows y Ubuntu, más gitleaks.
 - [ ] Un test que verifique la versión.
 
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- Backend de build `hatchling`, versión única en `src/p6cli/__init__.py`.
+- Versión inicial `0.1.0`.
+- CI solo con Python 3.14 en Windows y Ubuntu; `requires-python = ">=3.11"` y ruff/mypy apuntando a 3.11.
+- `p6` sin argumentos muestra un aviso en español (salida 0) hasta M5.
+- `p6 --version` se verifica en tests con `CliRunner`; la prueba del comando instalado la haces tú a mano (Claude no ejecuta `p6`).
+
 **Practica de Claude Code:** modo plan, revisar un plan antes de aprobarlo, commits por paso.
 
 ---
