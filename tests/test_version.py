@@ -5,11 +5,13 @@ import sys
 from importlib.metadata import version
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 import p6cli
-from p6cli.cli import messages
+from p6cli.cli import menus, messages
 from p6cli.cli.app import app
+from p6cli.cli.prompter import Prompter, PrompterQuestionary
 
 runner = CliRunner()
 
@@ -25,11 +27,30 @@ def test_opcion_version_muestra_version() -> None:
     assert resultado.output == f"p6cli {p6cli.__version__}\n"
 
 
-def test_sin_argumentos_muestra_aviso() -> None:
+def test_sin_argumentos_abre_los_menus(monkeypatch: pytest.MonkeyPatch) -> None:
+    recibidos: list[Prompter] = []
+    monkeypatch.setattr(menus, "ejecutar", recibidos.append)
+
     resultado = runner.invoke(app, [])
 
     assert resultado.exit_code == 0
-    assert messages.AVISO_SIN_MENUS in resultado.output
+    assert len(recibidos) == 1
+    assert isinstance(recibidos[0], PrompterQuestionary)
+
+
+@pytest.mark.parametrize("interrupcion", [KeyboardInterrupt, typer.Abort])
+def test_ctrl_c_en_los_menus_sale_con_130(
+    monkeypatch: pytest.MonkeyPatch, interrupcion: type[BaseException]
+) -> None:
+    def interrumpir(_: Prompter) -> None:
+        raise interrupcion
+
+    monkeypatch.setattr(menus, "ejecutar", interrumpir)
+
+    resultado = runner.invoke(app, [])
+
+    assert resultado.exit_code == 130
+    assert messages.ABORTADO in resultado.output
 
 
 def test_ejecucion_como_modulo_muestra_version(

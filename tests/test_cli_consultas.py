@@ -11,6 +11,7 @@ from typer.testing import CliRunner, Result
 from p6cli.cli import app as modulo_app
 from p6cli.cli import messages, render
 from p6cli.cli.app import app
+from p6cli.cli.prompter import PrompterTexto
 from p6cli.core import catalog, profiles, secrets
 from p6cli.core.diagnostics import EstadoDiagnostico
 from p6cli.core.profiles import Profile, ProfileStore
@@ -600,7 +601,7 @@ def test_ctrl_c_en_una_pregunta_sale_con_130(monkeypatch: pytest.MonkeyPatch) ->
     def abortar(*_: object, **__: object) -> str:
         raise typer.Abort
 
-    monkeypatch.setattr(modulo_app, "_pedir_oculto", abortar)
+    monkeypatch.setattr(PrompterTexto, "password", abortar)
 
     resultado = get_actividades()
 

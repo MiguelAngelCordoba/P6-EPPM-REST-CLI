@@ -288,7 +288,7 @@ def test_add_tls_opcion_invalida_repregunta(invalida: str) -> None:
     resultado = invocar("add", entrada=entrada)
 
     assert resultado.exit_code == 0
-    assert messages.OPCION_TLS_INVALIDA in resultado.output
+    assert "Responde y, n o ca." in resultado.output
     assert ProfileStore().obtener("demo").verify_ssl is True
 
 
@@ -415,7 +415,7 @@ def test_add_fallo_opcion_invalida_repregunta(
     resultado = invocar("add", entrada=ALTA_DEMO + respuestas(invalida, "x"))
 
     assert resultado.exit_code == 0
-    assert messages.OPCION_FALLO_INVALIDA in resultado.output
+    assert "Responde c, g o x." in resultado.output
     assert ProfileStore().listar() == []
 
 

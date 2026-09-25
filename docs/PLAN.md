@@ -17,7 +17,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M2 | Perfiles, secretos y URLs | ✅ |
 | M3 | Autenticación y diagnóstico | ✅ |
 | M4 | Catálogo, cliente y comandos básicos | ✅ |
-| M5 | Flujo interactivo | ⬜ |
+| M5 | Flujo interactivo | ✅ |
 | M6 | Lecturas masivas y spread | ⬜ |
 | M7 | Exportación | ⬜ |
 | M8 | Modo automatización | ⬜ |
@@ -158,14 +158,36 @@ Especificación: §8, §9, §12, §13 (tabla y JSON en pantalla), §14.
 
 Especificación: §10, §11.
 
-- [ ] `cli/prompter.py`: protocolo `Prompter` e implementación con questionary.
-- [ ] `cli/messages.py`: todos los textos de §10 y §11.
-- [ ] `cli/menus.py`: inicio, credenciales, agregar, administrar, elegir endpoint, resultados y siguiente paso.
-- [ ] `cli/forms.py`: formulario `entity` con las 7 reglas de §11.1 y la confirmación §11.3 con el comando equivalente.
-- [ ] Logout al cambiar de ambiente y al salir.
-- [ ] Tests de transiciones con `Prompter` guionizado.
+- [x] `cli/prompter.py`: protocolo `Prompter` e implementación con questionary.
+- [x] `cli/messages.py`: todos los textos de §10 y §11.
+- [x] `cli/menus.py`: inicio, credenciales, agregar, administrar, elegir endpoint, resultados y siguiente paso.
+- [x] `cli/forms.py`: formulario `entity` con las 7 reglas de §11.1 y la confirmación §11.3 con el comando equivalente.
+- [x] Logout al cambiar de ambiente y al salir.
+- [x] Tests de transiciones con `Prompter` guionizado.
 
-**Validación manual (tú):** recorrer el flujo completo contra tu instancia de pruebas.
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- El asistente de perfiles pasa a `cli/forms.py` sobre el `Prompter`. Los menús usan `PrompterQuestionary` (listas con flechas); `p6 profiles add/edit` usan `PrompterTexto` (`typer.prompt`), con las mismas teclas `y · n · ca` y `c · g · x`.
+- Spread (M6) y Exportar a CSV/JSON (M7) aparecen deshabilitados con «(próximamente)».
+- Si el perfil no tiene clave guardada, se pide oculta, se usa solo en esa sesión y no se guarda; para guardarla está «Actualizar credenciales».
+- «Continuar» ejecuta la prueba de conexión completa (§7) con el único intento de login de la sesión; si da OK, esa sesión atiende todas las consultas del ambiente.
+- «Actualizar credenciales» prueba con una sesión nueva; si da OK guarda usuario y clave y sigue con esa misma sesión, sin un segundo login.
+- La clave se pide sin eco (no con `questionary.password`, que muestra un `*` por carácter).
+- Cualquier error al ejecutar la consulta (no solo el 400) muestra mensaje y pista, y el formulario reaparece con lo escrito.
+
+**Validación manual (tú)** — contra productivo, solo lecturas acotadas (no hay instancia de pruebas):
+
+- [x] `p6` → elegir ambiente → Continuar → `project` con `?` en Fields → consulta filtrada → Nueva consulta → Cambiar ambiente → Salir.
+- [x] Ctrl+C dentro de una lista y dentro de un texto: sale con `Aborted!`.
+- [x] Revisar que las listas se ven bien en la terminal de Windows (separadores, opciones deshabilitadas, `⚙`).
+
+**Ajustes tras la validación manual** (detalle en `ESPECIFICACION.md` §18):
+
+- `?` funciona en Fields, Filter y OrderBy: Fields lista los campos válidos; Filter y OrderBy muestran la guía de `p6 syntax` con un aviso de comillas, y se vuelve a pedir el mismo campo.
+- La cabecera del formulario deja claro que la documentación de Oracle y la ayuda con `?` son caminos alternativos.
+- [x] Repetir `?` en Fields, Filter y OrderBy tras el ajuste.
+- En «¿Qué sigue?» se agregan «Ver la tabla completa» y «Ver el JSON completo», sin consultar de nuevo a P6; con más de 500 filas se pide confirmar (por defecto No).
+- [x] Probar «Ver la tabla completa» y «Ver el JSON completo» con una consulta de más de 25 filas.
 
 **Practica de Claude Code:** pedir una revisión crítica del flujo contra la especificación antes de dar el hito por cerrado.
 
