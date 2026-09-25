@@ -42,6 +42,7 @@ class MotivoAuth(StrEnum):
 
     LOGIN_YA_INTENTADO = "login_ya_intentado"
     CLAVE_NO_CODIFICABLE = "clave_no_codificable"
+    LOGIN_FALLIDO = "login_fallido"
 
 
 class MotivoHTTP(StrEnum):
@@ -51,6 +52,28 @@ class MotivoHTTP(StrEnum):
     SIN_CONEXION = "sin_conexion"
     TLS = "tls"
     TIEMPO_AGOTADO = "tiempo_agotado"
+    CODIGO_HTTP = "codigo_http"
+    RESPUESTA_NO_JSON = "respuesta_no_json"
+    FORMATO_INESPERADO = "formato_inesperado"
+
+
+class MotivoUso(StrEnum):
+    """Motivos de un error de uso: la consulta no se envía."""
+
+    ENDPOINT_DESCONOCIDO = "endpoint_desconocido"
+    PLANTILLA_NO_SOPORTADA = "plantilla_no_soportada"
+    CAMPOS_VACIOS = "campos_vacios"
+    PARAMETRO_REQUERIDO = "parametro_requerido"
+    PARAMETRO_DESCONOCIDO = "parametro_desconocido"
+    CAMPO_INVALIDO = "campo_invalido"
+    URL_DEMASIADO_LARGA = "url_demasiado_larga"
+    METODO_NO_PERMITIDO = "metodo_no_permitido"
+
+
+class MotivoGuardarrail(StrEnum):
+    """Motivos de un bloqueo por guardarraíl."""
+
+    SIN_FILTRO = "sin_filtro"
 
 
 class P6CliError(Exception):
@@ -80,4 +103,16 @@ class AuthError(P6CliError):
 
 
 class P6HTTPError(P6CliError):
-    """Fallo de comunicación con P6. Lleva método y URL, nunca cabeceras."""
+    """Fallo de comunicación con P6. Lleva método y URL, nunca cabeceras.
+
+    Con ``CODIGO_HTTP`` lleva además ``codigo`` y ``mensaje_p6`` (fragmento del cuerpo); la
+    pista por código la arma la interfaz.
+    """
+
+
+class GuardrailError(P6CliError):
+    """Consulta bloqueada por un guardarraíl (p. ej. endpoint grande sin filtro)."""
+
+
+class UsageError(P6CliError):
+    """Uso inválido: parámetros, endpoint o verbo no permitido. No se envía nada."""

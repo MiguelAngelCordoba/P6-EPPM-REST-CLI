@@ -222,6 +222,7 @@ class Endpoint:
     path: str              # ruta relativa a {base}, ej. "/activity"
     group: str             # agrupación en el menú
     template: str          # "entity" | "spread" | "custom"
+    doc_name: str          # título exacto en la documentación de Oracle, ej. "Read Activities"
     description: str       # en español
     large: bool = False
     doc_verified: bool = False
@@ -240,7 +241,7 @@ La identidad es `key`. El número visible en listados es un índice derivado del
 | `Filter` | FILTER | no | El cliente envía `ObjectId:gte:0` |
 | `OrderBy` | ORDER | no | El cliente envía `ObjectId asc` |
 
-La documentación de Oracle marca `Filter` y `OrderBy` como obligatorios; en la interfaz son opcionales porque el cliente los completa.
+En la rama 24.x la documentación de Oracle marca `Filter` y `OrderBy` como opcionales. El cliente igual envía los valores neutros cuando quedan vacíos (P6 los acepta, confirmado en M4), para que la consulta enviada sea siempre explícita.
 
 **`spread`**
 
@@ -259,26 +260,28 @@ Formato de fecha enviado: `AAAA-MM-DDT00:00:00`. Se confirma contra una instanci
 
 ### 8.3 Catálogo inicial
 
-| key | path | plantilla | grupo | large | doc_verified |
-|---|---|---|---|---|---|
-| `project` | `/project` | entity | Proyectos | no | no |
-| `eps` | `/eps` | entity | Proyectos | no | no |
-| `wbs` | `/wbs` | entity | Proyectos | sí | no |
-| `activity` | `/activity` | entity | Actividades | sí | **sí** |
-| `relationship` | `/relationship` | entity | Actividades | sí | no |
-| `activityCodeType` | `/activityCodeType` | entity | Códigos | no | no |
-| `activityCode` | `/activityCode` | entity | Códigos | sí | no |
-| `activityCodeAssignment` | `/activityCodeAssignment` | entity | Códigos | sí | no |
-| `resource` | `/resource` | entity | Recursos | no | no |
-| `resourceAssignment` | `/resourceAssignment` | entity | Recursos | sí | no |
-| `udfType` | `/udfType` | entity | UDF | no | no |
-| `udfValue` | `/udfValue` | entity | UDF | sí | no |
-| `spread.activity` | `/spread/activitySpread` | spread (`ActivityObjectId`) | Series temporales | — | **sí** |
-| `spread.resourceAssignment` | `/spread/resourceAssignmentSpread` | spread (`ResourceAssignmentObjectId`) | Series temporales | — | **sí** |
+| key | doc_name (Oracle) | path | plantilla | grupo | large | doc_verified |
+|---|---|---|---|---|---|---|
+| `project` | Read Projects | `/project` | entity | Proyectos | no | sí |
+| `eps` | Read EPS | `/eps` | entity | Proyectos | no | sí |
+| `wbs` | Read WBS | `/wbs` | entity | Proyectos | sí | sí |
+| `activity` | Read Activities | `/activity` | entity | Actividades | sí | sí |
+| `relationship` | Read Relationship | `/relationship` | entity | Actividades | sí | sí |
+| `activityCodeType` | Read ActivityCodeTypes | `/activityCodeType` | entity | Códigos | no | sí |
+| `activityCode` | Read ActivityCodes | `/activityCode` | entity | Códigos | sí | sí |
+| `activityCodeAssignment` | Read ActivityCodeAssignments | `/activityCodeAssignment` | entity | Códigos | sí | sí |
+| `resource` | Read Resources | `/resource` | entity | Recursos | no | sí |
+| `resourceAssignment` | Read ResourceAssignments | `/resourceAssignment` | entity | Recursos | sí | sí |
+| `udfType` | Read UDFTypes | `/udfType` | entity | UDF | no | sí |
+| `udfValue` | Read UDFValues | `/udfValue` | entity | UDF | sí | sí |
+| `spread.activity` | ReadActivitySpread | `/spread/activitySpread` | spread (`ActivityObjectId`) | Series temporales | — | sí |
+| `spread.resourceAssignment` | ReadResourceAssignmentSpread | `/spread/resourceAssignmentSpread` | spread (`ResourceAssignmentObjectId`) | Series temporales | — | sí |
+
+Las 14 páginas de la rama 24.x se revisaron en M4: título, ruta (con mayúsculas) y parámetros coinciden con el catálogo.
 
 El catálogo crece con el uso siguiendo la regla de `CLAUDE.md` ("Agregar un endpoint al catálogo").
 
-**Operaciones auxiliares** (no son entradas del catálogo): `GET {path}/fields` lista los campos válidos de cualquier endpoint `entity`.
+**Operaciones auxiliares** (no son entradas del catálogo): `GET {path}/fields` lista los campos válidos de cualquier endpoint `entity`. Responde 200 con Content-Type JSON, pero el cuerpo es texto plano separado por comas (ver `APRENDIZAJES.md` §6).
 
 ---
 
@@ -464,7 +467,8 @@ El comando equivalente permite repetir la consulta en modo flags.
 | `p6 profiles remove NAME [--yes]` | Elimina perfil y clave |
 | `p6 profiles default NAME` | Marca el predeterminado |
 | `p6 doctor [NAME]` | Prueba de conexión con diagnóstico (§7) |
-| `p6 endpoints [--group G]` | Lista el catálogo |
+| `p6 endpoints [--group G]` | Lista el catálogo con el nombre y la ruta de la documentación de Oracle |
+| `p6 syntax [TEMA]` | Guía de sintaxis de `filter`, `order-by` o `fields`; sin tema lista los temas |
 | `p6 fields ENDPOINT [--env NAME]` | Campos válidos de un endpoint |
 | `p6 get ENDPOINT --fields F [--filter X] [--order-by Y] [--env NAME] [--allow-unfiltered] [--max-rows N] [--json] [--output ARCHIVO]` | Lectura simple |
 | `p6 get-all ENDPOINT --fields F --filter X [--chunk N] [--env NAME] [--output ARCHIVO]` | Lectura masiva por lotes |
@@ -598,3 +602,21 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | `p6 doctor` hace logout al final si el login fue exitoso; el logout no aparece en los pasos | No deja sesiones abiertas en el servidor |
 | Salida de `p6 doctor`: `0` si OK, `1` con cualquier otro estado, `2` con errores de perfil, configuración o keyring | Códigos de §12 |
 | Los errores de red se lanzan como `P6HTTPError` fuera del `except`, sin `__cause__` ni `__context__` | La excepción de requests guarda la petición con sus cabeceras |
+| `Endpoint.template` es un `StrEnum` (`Plantilla`) con los valores `entity`, `spread` y `custom` | Mismo valor de texto que §8.1, con verificación de tipos |
+| `Cliente` hace el login en la primera petición; parámetros, guardarraíl y largo de URL se validan antes. En `p6 get` la validación ocurre incluso antes de pedir la clave | Un error de uso nunca gasta el único intento de login ni pide datos de más |
+| `Sesion` rechaza con `UsageError`, sin enviar nada, cualquier verbo distinto de GET salvo `POST /login` y `POST /logout` | Defensa en profundidad de la regla de solo lectura |
+| `P6HTTPError` lleva `codigo`, `metodo`, `url` y `mensaje_p6` (máx. 500 caracteres); el texto de la pista por código vive en `cli/messages.py` (`PISTAS_HTTP`). Un código sin pista en §14 se muestra sin ella | `core` no conoce textos de interfaz |
+| Un 200 JSON de `get` debe ser una lista de objetos; si no, `P6HTTPError` `FORMATO_INESPERADO` | No se muestra como datos algo que no lo es |
+| `fields` lee el cuerpo como texto: si es JSON válido acepta una lista de textos o un texto con comas; si no, lo trata como texto plano con comas. Cada nombre debe cumplir `^[A-Za-z][A-Za-z0-9_]*$`; si no, `FORMATO_INESPERADO` | P6 real responde 200 con Content-Type JSON y cuerpo en texto plano separado por comas (validación manual de M4), aunque Oracle declara `string` |
+| `get` y `fields` solo admiten endpoints `entity`; un spread sale con 2 y sugiere `p6 spread` | Spread tiene su propio comando (M6) |
+| Un login fallido en `get` o `fields` se clasifica con las filas 5–9 de §7 (`clasificar_login`), sin peticiones extra; se muestran mensaje y sugerencia del diagnóstico y `p6 doctor NAME`. Salida 1 | Explica la causa sin gastar otro intento de login |
+| `get` y `fields` sin clave guardada la piden oculta, la usan solo en esa ejecución y no la guardan. El aviso y la pregunta van a stderr | Mismo criterio que `p6 doctor`; stdout queda limpio para `--json` |
+| `--max-rows N` limita solo las filas de la tabla (25 por defecto, `0` = todas, negativo es error de uso); `--json` imprime siempre la lista completa, solo el JSON en stdout (indentación 2, `ensure_ascii=False`) | Recortar en el cliente no reduce la carga de P6; el JSON completo se puede redirigir o pasar a `jq` |
+| Celdas de la tabla: nulos vacíos, valores no texto como JSON, caracteres de control como espacio, recorte a 40 caracteres con `…`. Encabezado `activity · 1.284 filas · 3,2 s` | Formato numérico en español y tabla estable |
+| `p6 endpoints` muestra el catálogo agrupado con títulos de grupo, en columnas `#`, `Tasks` (clave para `p6 get`), `Name` (título en Oracle), `Ruta`, `Grande` y `Verificado`. Tasks, Name y Ruta nunca se recortan. `--group` no distingue mayúsculas y un grupo inexistente sale con 2 listando los válidos | Misma agrupación que el menú de §10.5; el nombre y la ruta sirven para buscar la operación en la documentación |
+| Los encabezados `Tasks` y `Name` de `p6 endpoints` van en inglés | Decisión del usuario: coinciden con la documentación de Oracle. Excepción a los textos en español |
+| `Endpoint.doc_name` guarda el título exacto de la página de Oracle; las 14 entradas del catálogo quedan con `doc_verified=True` | Se revisaron las 14 páginas de la rama 24.x en M4 |
+| `p6 syntax [TEMA]` muestra guías de `filter`, `order-by` y `fields` armadas solo con la documentación oficial (Entity Filtering, Ordering), con ejemplos de valores de muestra y la URL de referencia. Tema desconocido sale con 2. No toca red ni perfiles. `--filter`, `--order-by` y la pista del 400 remiten a la guía | Pedido del usuario tras la validación manual: consultar la sintaxis sin salir de la terminal |
+| `--fields ObjectId, Id, Name` sin comillas no se une: la terminal parte los argumentos en cada espacio, y con comillas ya funciona | Decisión del usuario: es comportamiento de la terminal, no del programa |
+| Ctrl+C, también dentro de una pregunta (`Abort` de Typer), sale con 130 y el mensaje estándar `Aborted!` en todos los comandos | Código de §12; Typer por sí solo sale con 1 al abortar una pregunta |
+| `normalizar_campos` distingue `CAMPOS_VACIOS` («Se necesita al menos un campo en Fields.») de `PARAMETRO_REQUERIDO` | Mensaje de §11.1, regla 2, reutilizable en M5 |

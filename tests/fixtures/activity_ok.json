@@ -1,0 +1,188 @@
+[
+  {
+    "ObjectId": 1001,
+    "Id": "A1000",
+    "Name": "Actividad de ejemplo con un nombre muy largo que supera el límite",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1002,
+    "Id": "A1010",
+    "Name": "Actividad de ejemplo 2",
+    "Status": "In Progress",
+    "Codigos": [
+      {
+        "Tipo": "Fase",
+        "Valor": "Diseño"
+      }
+    ]
+  },
+  {
+    "ObjectId": 1003,
+    "Id": "A1020",
+    "Name": "Actividad de ejemplo 3",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1004,
+    "Id": "A1030",
+    "Name": "Actividad de ejemplo 4",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1005,
+    "Id": "A1040",
+    "Name": "Actividad de ejemplo 5",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1006,
+    "Id": "A1050",
+    "Name": "Actividad de ejemplo 6",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1007,
+    "Id": "A1060",
+    "Name": "Actividad de ejemplo 7",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1008,
+    "Id": "A1070",
+    "Name": "Actividad de ejemplo 8",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1009,
+    "Id": "A1080",
+    "Name": "Actividad de ejemplo 9",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1010,
+    "Id": "A1090",
+    "Name": "Actividad de ejemplo 10",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1011,
+    "Id": "A1100",
+    "Name": "Actividad de ejemplo 11",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1012,
+    "Id": "A1110",
+    "Name": "Actividad de ejemplo 12",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1013,
+    "Id": "A1120",
+    "Name": "Actividad de ejemplo 13",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1014,
+    "Id": "A1130",
+    "Name": "Actividad de ejemplo 14",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1015,
+    "Id": "A1140",
+    "Name": "Actividad de ejemplo 15",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1016,
+    "Id": "A1150",
+    "Name": "Actividad de ejemplo 16",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1017,
+    "Id": "A1160",
+    "Name": "Actividad de ejemplo 17",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1018,
+    "Id": "A1170",
+    "Name": "Actividad de ejemplo 18",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1019,
+    "Id": "A1180",
+    "Name": "Actividad de ejemplo 19",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1020,
+    "Id": "A1190",
+    "Name": "Actividad de ejemplo 20",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1021,
+    "Id": "A1200",
+    "Name": "Actividad de ejemplo 21",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1022,
+    "Id": "A1210",
+    "Name": "Actividad de ejemplo 22",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1023,
+    "Id": "A1220",
+    "Name": "Actividad de ejemplo 23",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1024,
+    "Id": "A1230",
+    "Name": "Actividad de ejemplo 24",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1025,
+    "Id": "A1240",
+    "Name": "Actividad de ejemplo 25",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1026,
+    "Id": "A1250",
+    "Name": "Actividad de ejemplo 26",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1027,
+    "Id": "A1260",
+    "Name": "Actividad de ejemplo 27",
+    "Status": "Completed"
+  },
+  {
+    "ObjectId": 1028,
+    "Id": "A1270",
+    "Name": "Actividad de ejemplo 28",
+    "Status": "Not Started"
+  },
+  {
+    "ObjectId": 1029,
+    "Id": "A1280",
+    "Name": "Actividad de ejemplo 29",
+    "Status": "In Progress"
+  },
+  {
+    "ObjectId": 1030,
+    "Id": "A1290",
+    "Name": "Actividad de ejemplo 30",
+    "Status": "Completed"
+  }
+]

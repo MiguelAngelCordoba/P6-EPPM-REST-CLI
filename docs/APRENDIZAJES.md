@@ -58,6 +58,14 @@ Delante de P6 suele haber un reverse proxy (en la instalación on-premise: un ga
 
 `GET /project/fields` devolvió **200 JSON** (el mismo contenido byte por byte en ambas instalaciones) incluso con un DatabaseName inválido. Es un endpoint de metadatos: confirma que la ruta es la API, no que la credencial sirva. La autenticación solo se confirma con un login 200.
 
+**El cuerpo de `/fields` no es JSON válido.** Responde con `Content-Type` JSON, pero el cuerpo es texto plano con los nombres separados por comas, sin corchetes ni comillas:
+
+```
+ActivityDefaultActivityType,ActivityDefaultCalendarName,ActivityDefaultCalendarObjectId,...
+```
+
+La documentación de Oracle declara el schema como `string`. Un cliente que haga `response.json()` falla; hay que leerlo como texto y partirlo por comas. Pasa igual en `/activity/fields`.
+
 ## 7. Autenticación
 
 - **Username Token Profile** (lo que funcionó en ambas): cabecera `authToken` con base64 de `usuario:contraseña`, y login con `POST /login?DatabaseName=...` más cabeceras `username` y `password`.
@@ -67,9 +75,14 @@ Delante de P6 suele haber un reverse proxy (en la instalación on-premise: un ga
 
 ## 8. El contrato de las lecturas
 
-- Las lecturas estándar (`GET /activity`, `/project`...) reciben `Fields`, `Filter` y `OrderBy`. La documentación marca los tres como obligatorios.
-- Operadores de filtro: `:eq:` `:gt:` `:lt:` `:gte:` `:lte:` `!=` `:like:` (comodín `%`), combinados con `:and:` y `:or:`.
+- Las lecturas estándar (`GET /activity`, `/project`...) reciben `Fields`, `Filter` y `OrderBy`. En la rama 24.x la documentación marca solo `Fields` como obligatorio.
+- P6 acepta `Filter=ObjectId:gte:0` y `OrderBy=ObjectId asc`, los valores neutros que envía el cliente cuando se dejan vacíos.
+- Operadores de filtro: `:eq:` `:gt:` `:lt:` `:gte:` `:lte:` `!=` `:like:` (comodín `%`), combinados con `:and:` y `:or:`. Los ejemplos de Oracle también usan `IN(1,2)`.
+- `!=` se escribe sin dos puntos: `ObjectId!=1001`. `:gt:` `:lt:` `:gte:` `:lte:` solo aplican a números y fechas; `:like:` solo a textos y enums.
+- Textos y fechas van entre comillas simples: `Status:eq:'Not Started'`, `CreateDate:gte:'2021-04-20'`. Los números, sin comillas.
 - La documentación **no define paréntesis**. Combinar un filtro con `:or:` y un rango adicional con `:and:` tiene precedencia no garantizada.
+- Un campo inexistente en `Fields` responde **400** con el mensaje `<Campo> is not a valid field.`
+- Un filtro sin coincidencias responde **200 con `[]`**, no 404.
 - Cada endpoint tiene `GET /{servicio}/fields` para descubrir los nombres de campo válidos de esa instancia.
 - **No todos los GET siguen ese contrato:** los de spread piden otros parámetros (§10).
 
@@ -123,4 +136,5 @@ La API responde **401 o 404** cuando la cuenta no tiene autorización sobre el o
 - Autenticación estándar: https://docs.oracle.com/cd/F88966_01/English/Integration_Documentation/rest_api/D99833.html
 - Filtrado de entidades: https://docs.oracle.com/cd/F88966_01/English/Integration_Documentation/rest_api/D99716.html
 - Uso de filtros: https://docs.oracle.com/cd/F88966_01/English/Integration_Documentation/rest_api/D102455.html
+- Ordenamiento (OrderBy): https://docs.oracle.com/cd/F88966_01/English/Integration_Documentation/rest_api/D100086.html
 - Recomendaciones de rendimiento: https://docs.oracle.com/cd/F88966_01/English/Integration_Documentation/rest_api/D102457.html

@@ -4,6 +4,8 @@ Esquema Username Token Profile (especificación §6). La sesión solo expone GET
 POST son el login y el logout. Reglas de seguridad:
 
 - Un solo intento de login por instancia: un segundo ``login()`` falla sin enviar nada.
+- Cualquier verbo distinto de GET, salvo ``POST /login`` y ``POST /logout``, se rechaza con
+  ``UsageError`` antes de enviarse.
 - Ninguna petición sigue redirecciones: requests reenviaría las cabeceras ``username``,
   ``password`` y ``authToken`` al destino de la redirección.
 - Los errores de red se traducen a ``P6HTTPError`` fuera del bloque ``except``, para que la
@@ -21,7 +23,14 @@ from urllib.parse import urlencode
 
 import requests
 
-from p6cli.core.errors import AuthError, MotivoAuth, MotivoHTTP, P6HTTPError
+from p6cli.core.errors import (
+    AuthError,
+    MotivoAuth,
+    MotivoHTTP,
+    MotivoUso,
+    P6HTTPError,
+    UsageError,
+)
 from p6cli.core.profiles import Profile
 
 # Segundos para establecer la conexión TCP/TLS; la lectura usa el timeout del perfil.
@@ -29,6 +38,9 @@ TIEMPO_CONEXION = 10
 
 RUTA_LOGIN = "/login"
 RUTA_LOGOUT = "/logout"
+
+# Regla de solo lectura: además de GET, solo se permiten estos POST.
+_POST_PERMITIDOS = frozenset({RUTA_LOGIN, RUTA_LOGOUT})
 
 # Mismo criterio que requests para valores de cabecera: sin espacio inicial ni saltos de línea.
 _CABECERA_VALIDA = re.compile(r"\S[^\r\n]*|")
@@ -43,6 +55,23 @@ def es_contenido_json(content_type: str) -> bool:
     """``True`` si el Content-Type es JSON (``application/json`` o ``*+json``)."""
     tipo = content_type.split(";", 1)[0].strip().lower()
     return tipo == "application/json" or tipo.endswith("+json")
+
+
+def fragmento(texto: str, largo: int) -> str:
+    """Primeros ``largo`` caracteres del texto en una línea, sin caracteres de control."""
+    visible = "".join(caracter if caracter.isprintable() else " " for caracter in texto)
+    return " ".join(visible.split())[:largo]
+
+
+def mensaje_p6(respuesta: requests.Response, largo: int) -> str:
+    """Campo ``message`` del JSON de error de P6; si no lo hay, el inicio del cuerpo."""
+    try:
+        datos = respuesta.json()
+    except requests.exceptions.JSONDecodeError:
+        datos = None
+    if isinstance(datos, dict) and isinstance(datos.get("message"), str):
+        return fragmento(datos["message"], largo)
+    return fragmento(respuesta.text, largo)
 
 
 def _causas(error: BaseException) -> Iterator[BaseException]:
@@ -84,6 +113,25 @@ def _cabecera_valida(valor: str) -> bool:
     return bool(_CABECERA_VALIDA.fullmatch(valor))
 
 
+def base_api(perfil: Profile) -> str:
+    """Base de la API: ``{host}/{contexto}/restapi``."""
+    return f"{perfil.host}/{perfil.context}/restapi"
+
+
+def _armar_url(base: str, ruta: str, consulta: Mapping[str, str]) -> str:
+    url = f"{base}{ruta}"
+    return f"{url}?{urlencode(consulta)}" if consulta else url
+
+
+def _consulta_get(perfil: Profile, params: Mapping[str, str] | None) -> dict[str, str]:
+    return {**(params or {}), "DatabaseName": perfil.database_name}
+
+
+def url_get(perfil: Profile, ruta: str, params: Mapping[str, str] | None = None) -> str:
+    """URL exacta que enviaría un GET de ``Sesion`` (sin cabeceras). No necesita la clave."""
+    return _armar_url(base_api(perfil), ruta, _consulta_get(perfil, params))
+
+
 class Sesion:
     """Sesión autenticada contra un perfil. Conserva las cookies que devuelva el servidor."""
 
@@ -91,7 +139,7 @@ class Sesion:
         self, perfil: Profile, clave: str, *, http: requests.Session | None = None
     ) -> None:
         self.perfil = perfil
-        self.base = f"{perfil.host}/{perfil.context}/restapi"
+        self.base = base_api(perfil)
         self.autenticada = False
         self._clave = clave
         self._token = token_autenticacion(perfil.username, clave)
@@ -103,6 +151,11 @@ class Sesion:
             f"Sesion(perfil={self.perfil.name!r}, base={self.base!r}, "
             f"autenticada={self.autenticada})"
         )
+
+    @property
+    def login_intentado(self) -> bool:
+        """``True`` si ya se gastó el único intento de login de esta sesión."""
+        return self._login_intentado
 
     def __enter__(self) -> Self:
         return self
@@ -138,9 +191,8 @@ class Sesion:
 
     def get(self, ruta: str, params: Mapping[str, str] | None = None) -> requests.Response:
         """GET a ``{base}{ruta}``; ``DatabaseName`` siempre va en la consulta."""
-        consulta = {**(params or {}), "DatabaseName": self.perfil.database_name}
         cabeceras = {"authToken": self._token, "Accept": "application/json"}
-        return self._enviar("GET", ruta, consulta, cabeceras)
+        return self._enviar("GET", ruta, _consulta_get(self.perfil, params), cabeceras)
 
     def logout(self) -> None:
         """Cierra la sesión en el servidor. Sus fallos se ignoran."""
@@ -154,14 +206,13 @@ class Sesion:
             self.logout()
         self._http.close()
 
-    def _url(self, ruta: str, consulta: Mapping[str, str]) -> str:
-        url = f"{self.base}{ruta}"
-        return f"{url}?{urlencode(consulta)}" if consulta else url
-
     def _enviar(
         self, metodo: str, ruta: str, consulta: Mapping[str, str], cabeceras: Mapping[str, str]
     ) -> requests.Response:
-        url = self._url(ruta, consulta)
+        # Defensa en profundidad de la regla de solo lectura: se rechaza antes de enviar.
+        if metodo != "GET" and not (metodo == "POST" and ruta in _POST_PERMITIDOS):
+            raise UsageError(MotivoUso.METODO_NO_PERMITIDO, metodo=metodo, ruta=ruta)
+        url = _armar_url(self.base, ruta, consulta)
         try:
             return self._http.request(
                 metodo,
