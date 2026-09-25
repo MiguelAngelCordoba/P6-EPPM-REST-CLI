@@ -41,11 +41,8 @@ src/p6cli/
 
 ## Convenciones
 
-- Python 3.14+, layout `src/`, empaquetado con `pyproject.toml`.
 - **Identificadores, comentarios, docstrings y mensajes de commit en español.** Documentación (`docs/`, `README.md`, este archivo) en español. Textos de interfaz en español tambien.
 - **Excepciones fijas de idioma en la interfaz:** las confirmaciones sí/no usan siempre el estándar en inglés `(Y/n)` / `(y/N)` y solo aceptan `y` o `n`. Los mensajes técnicos estándar de las librerías (p. ej. `Aborted!`) se quedan en inglés. No cambiar ninguna de las dos cosas.
-- Type hints en todo el código; `mypy --strict` sobre `src/p6cli/core`.
-- `ruff` para lint y formato.
 - Commits con Conventional Commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
 
 ## Entorno virtual
@@ -56,15 +53,6 @@ src/p6cli/
   - Linux/macOS: `p6env/bin/python -m ...`
 - Nunca instales paquetes fuera de `p6env`, ni con `--user`, ni globales.
 - Si `p6env` no existe, no lo crees por tu cuenta: avísame.
-
-## Comandos
-
-```bash
-pip install -e ".[dev]"                    # instalar en modo desarrollo
-pytest                                     # tests, siempre sin red
-ruff check . && ruff format --check .      # lint y formato
-mypy src                                   # tipos
-```
 
 ## Forma de trabajo
 

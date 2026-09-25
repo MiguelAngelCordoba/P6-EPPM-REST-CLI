@@ -8,6 +8,7 @@ from p6cli.core.diagnostics import (
     LARGO_FRAGMENTO,
     DiagnosticReport,
     EstadoDiagnostico,
+    clasificar_login,
     diagnosticar,
     probar_conexion,
 )
@@ -237,7 +238,7 @@ def test_pasos_observados(http_simulado: responses.RequestsMock) -> None:
     assert (canario.metodo, canario.url) == ("GET", f"{BASE}/__p6cli_canary__?DatabaseName=orcl")
     assert fields.content_type == "application/json"
     assert fields.tamano > 0
-    assert fields.fragmento.startswith('["ObjectId"')
+    assert fields.fragmento.startswith("ObjectId,Id")
 
 
 def test_fragmento_acotado_y_sin_caracteres_de_control(
@@ -303,3 +304,36 @@ def test_el_reporte_no_contiene_secretos(
     texto = repr(reporte)
     assert CLAVE not in texto
     assert token_autenticacion("admin", CLAVE) not in texto
+
+
+# --- Clasificación del login sin diagnóstico completo ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("login", "estado"),
+    [
+        (APACHE_404, EstadoDiagnostico.ROUTE_NOT_FOUND),
+        (INTERFAZ_WEB_401, EstadoDiagnostico.UI_NOT_API),
+        (LOGIN_DATABASE_INVALIDA, EstadoDiagnostico.INVALID_DATABASE),
+        (LOGIN_RECHAZADO, EstadoDiagnostico.CREDENTIALS_REJECTED),
+        (
+            Simulada(401, cuerpo='{"message":"User locked."}', content_type="application/json"),
+            EstadoDiagnostico.AUTH_FAILED,
+        ),
+        (LOGIN_OK, EstadoDiagnostico.OK),
+        (
+            Simulada(200, cuerpo="<html></html>", content_type="text/html"),
+            EstadoDiagnostico.UNKNOWN,
+        ),
+    ],
+    ids=["route", "ui", "database", "rechazo", "auth", "ok", "unknown"],
+)
+def test_clasificar_login(
+    http_simulado: responses.RequestsMock, login: Simulada, estado: EstadoDiagnostico
+) -> None:
+    http_simulado.add(login.respuesta("POST", f"{BASE}/login"))
+
+    respuesta = Sesion(PERFIL, CLAVE).login()
+
+    assert clasificar_login(respuesta)[0] is estado
+    assert len(http_simulado.calls) == 1

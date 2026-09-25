@@ -17,7 +17,7 @@ import requests
 
 from p6cli.core.errors import MotivoHTTP, P6HTTPError
 from p6cli.core.profiles import Profile
-from p6cli.core.session import Sesion, es_contenido_json
+from p6cli.core.session import Sesion, es_contenido_json, fragmento, mensaje_p6
 
 RUTA_FIELDS = "/project/fields"
 RUTA_CANARIO = "/__p6cli_canary__"
@@ -43,9 +43,7 @@ class EstadoDiagnostico(StrEnum):
 
 
 def _fragmento(texto: str) -> str:
-    """Primeros caracteres del texto en una línea, sin caracteres de control."""
-    visible = "".join(caracter if caracter.isprintable() else " " for caracter in texto)
-    return " ".join(visible.split())[:LARGO_FRAGMENTO]
+    return fragmento(texto, LARGO_FRAGMENTO)
 
 
 def _content_type(respuesta: requests.Response) -> str:
@@ -117,14 +115,7 @@ def _redirige_a_interfaz_web(respuesta: requests.Response) -> bool:
 
 
 def _mensaje_p6(respuesta: requests.Response) -> str:
-    """Campo ``message`` del JSON de error de P6; si no lo hay, el inicio del cuerpo."""
-    try:
-        datos = respuesta.json()
-    except requests.exceptions.JSONDecodeError:
-        datos = None
-    if isinstance(datos, dict) and isinstance(datos.get("message"), str):
-        return _fragmento(datos["message"])
-    return _fragmento(respuesta.text)
+    return mensaje_p6(respuesta, LARGO_FRAGMENTO)
 
 
 def _detalle_desconocido(respuesta: requests.Response) -> dict[str, str]:
@@ -138,12 +129,12 @@ def _detalle_desconocido(respuesta: requests.Response) -> dict[str, str]:
     }
 
 
-def _clasificar(
-    login: requests.Response, fields: requests.Response, canario: requests.Response
-) -> tuple[EstadoDiagnostico, dict[str, str]]:
-    """Filas 4 a 10 de la tabla §7, en ese orden, más el caso ``UNKNOWN``."""
-    if canario.status_code != 404:
-        return EstadoDiagnostico.CATCH_ALL, {}
+def clasificar_login(login: requests.Response) -> tuple[EstadoDiagnostico, dict[str, str]]:
+    """Filas 5 a 9 de la tabla §7 a partir de la respuesta del login.
+
+    Devuelve ``OK`` con un login 200 JSON y ``UNKNOWN`` con cualquier otro caso. No hace
+    peticiones: sirve para explicar un login fallido sin repetir el diagnóstico completo.
+    """
     if login.status_code == 404 and _es_html(login):
         return EstadoDiagnostico.ROUTE_NOT_FOUND, {}
     if _redirige_a_interfaz_web(login):
@@ -158,6 +149,18 @@ def _clasificar(
         return EstadoDiagnostico.AUTH_FAILED, {"mensaje_p6": _mensaje_p6(login)}
     if not (login.status_code == 200 and _es_json(login)):
         return EstadoDiagnostico.UNKNOWN, _detalle_desconocido(login)
+    return EstadoDiagnostico.OK, {}
+
+
+def _clasificar(
+    login: requests.Response, fields: requests.Response, canario: requests.Response
+) -> tuple[EstadoDiagnostico, dict[str, str]]:
+    """Filas 4 a 10 de la tabla §7, en ese orden, más el caso ``UNKNOWN``."""
+    if canario.status_code != 404:
+        return EstadoDiagnostico.CATCH_ALL, {}
+    estado, detalle = clasificar_login(login)
+    if estado is not EstadoDiagnostico.OK:
+        return estado, detalle
     if not (fields.status_code == 200 and _es_json(fields)):
         return EstadoDiagnostico.UNKNOWN, _detalle_desconocido(fields)
     return EstadoDiagnostico.OK, {}

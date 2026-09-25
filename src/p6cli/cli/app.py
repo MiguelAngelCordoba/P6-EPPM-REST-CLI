@@ -1,32 +1,46 @@
 """Aplicación Typer: comandos con flags; sin argumentos abre los menús."""
 
 import dataclasses
+import json
+import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
 
 from p6cli import __version__
 from p6cli.cli import messages, render
-from p6cli.core import profiles, secrets
+from p6cli.core import catalog, profiles, secrets
+from p6cli.core.catalog import FIELDS, FILTER, ORDER_BY, Endpoint, Plantilla
+from p6cli.core.client import Cliente, validar_consulta
 from p6cli.core.diagnostics import DiagnosticReport, EstadoDiagnostico, probar_conexion
 from p6cli.core.errors import (
+    AuthError,
     ConfigError,
+    GuardrailError,
+    MotivoAuth,
+    MotivoHTTP,
     MotivoPerfil,
+    MotivoUso,
     P6CliError,
+    P6HTTPError,
     ProfileError,
     SecretStoreError,
+    UsageError,
 )
 from p6cli.core.profiles import Profile, ProfileStore
+from p6cli.core.session import Sesion
 from p6cli.core.urls import AdvertenciaUrl, normalizar_url
 
 # Códigos de salida (especificación §12).
 SALIDA_ERROR_P6 = 1
 SALIDA_ERROR_USO = 2
+SALIDA_GUARDARRAIL = 3
+SALIDA_INTERRUMPIDO = 130
 
 app = typer.Typer(help=messages.AYUDA_APP, add_completion=False)
 perfiles_app = typer.Typer(help=messages.AYUDA_PERFILES, no_args_is_help=True)
@@ -70,17 +84,49 @@ def main() -> None:
 
 
 def _texto_error(error: P6CliError) -> str:
-    return messages.ERRORES[error.motivo].format(**error.datos)
+    """Mensaje del error; agrega la pista por código HTTP o el diagnóstico del login."""
+    lineas = [messages.ERRORES[error.motivo].format(**error.datos)]
+    if error.motivo is MotivoHTTP.CODIGO_HTTP:
+        pista = messages.PISTAS_HTTP.get(int(error.datos["codigo"]))
+        if pista is not None:
+            lineas.append(messages.PISTA.format(pista=pista))
+    elif error.motivo is MotivoAuth.LOGIN_FALLIDO:
+        estado = EstadoDiagnostico(error.datos["estado"])
+        lineas.extend(texto for texto in render.textos_estado(estado, error.datos) if texto)
+        lineas.append(messages.SUGERENCIA_DOCTOR.format(perfil=error.datos["perfil"]))
+    return "\n".join(lineas)
+
+
+def _codigo_salida(error: P6CliError) -> int:
+    """Código de §12: 1 error de P6 o HTTP · 2 uso o configuración · 3 guardarraíl."""
+    if isinstance(error, P6HTTPError):
+        return SALIDA_ERROR_P6
+    if isinstance(error, AuthError) and error.motivo is MotivoAuth.LOGIN_FALLIDO:
+        return SALIDA_ERROR_P6
+    if isinstance(error, GuardrailError):
+        return SALIDA_GUARDARRAIL
+    return SALIDA_ERROR_USO
 
 
 @contextmanager
 def _errores_a_salida() -> Iterator[None]:
-    """Traduce los errores de ``core`` a un mensaje y al código de salida de §12."""
+    """Traduce los errores de ``core`` a un mensaje y al código de salida de §12.
+
+    Una interrupción (Ctrl+C, también dentro de una pregunta) sale con 130 y el mensaje
+    estándar ``Aborted!``.
+    """
     try:
         yield
     except P6CliError as error:
         typer.echo(_texto_error(error), err=True)
-        raise typer.Exit(code=SALIDA_ERROR_USO) from None
+        raise typer.Exit(code=_codigo_salida(error)) from None
+    except KeyboardInterrupt:
+        typer.echo("", err=True)
+        typer.echo(messages.ABORTADO, err=True)
+        raise typer.Exit(code=SALIDA_INTERRUMPIDO) from None
+    except typer.Abort:
+        typer.echo(messages.ABORTADO, err=True)
+        raise typer.Exit(code=SALIDA_INTERRUMPIDO) from None
 
 
 # --- Preguntas ------------------------------------------------------------------
@@ -145,14 +191,14 @@ def _pedir_url(actual: Profile | None) -> tuple[str, str]:
             return url.host, url.context
 
 
-def _pedir_oculto(texto: str) -> str:
-    return str(typer.prompt(texto, default="", show_default=False, hide_input=True))
+def _pedir_oculto(texto: str, err: bool = False) -> str:
+    return str(typer.prompt(texto, default="", show_default=False, hide_input=True, err=err))
 
 
-def _pedir_clave_nueva(texto: str = messages.PEDIR_CLAVE) -> str:
-    """Pide la clave oculta; no se acepta vacía."""
+def _pedir_clave_nueva(texto: str = messages.PEDIR_CLAVE, err: bool = False) -> str:
+    """Pide la clave oculta; no se acepta vacía. ``err`` escribe la pregunta en stderr."""
     while True:
-        clave = _pedir_oculto(texto)
+        clave = _pedir_oculto(texto, err)
         if clave:
             return clave
         typer.echo(messages.CLAVE_VACIA, err=True)
@@ -374,6 +420,27 @@ def marcar_predeterminado(name: ArgumentoNombre) -> None:
         typer.echo(messages.PREDETERMINADO_MARCADO.format(nombre=name))
 
 
+# --- Perfil y clave de una ejecución ---------------------------------------------
+
+
+def _perfil(nombre: str | None) -> Profile:
+    """El perfil indicado o, sin nombre, el predeterminado."""
+    store = ProfileStore()
+    nombre = nombre if nombre is not None else store.predeterminado()
+    if nombre is None:
+        raise ProfileError(MotivoPerfil.SIN_PREDETERMINADO)
+    return store.obtener(nombre)
+
+
+def _clave(perfil: Profile, aviso: str, *, err: bool = False) -> str:
+    """Clave guardada del perfil; si no hay, la pide oculta para esta ejecución sin guardarla."""
+    clave = secrets.leer_clave(perfil.name)
+    if clave is None:
+        typer.echo(aviso.format(nombre=perfil.name), err=err)
+        clave = _pedir_clave_nueva(messages.PEDIR_CLAVE_TEMPORAL, err=err)
+    return clave
+
+
 # --- Diagnóstico ----------------------------------------------------------------
 
 
@@ -383,16 +450,115 @@ def doctor(
 ) -> None:
     """Prueba de conexión con diagnóstico. Sale con 0 si conecta y con 1 si no."""
     with _errores_a_salida():
-        store = ProfileStore()
-        nombre = name if name is not None else store.predeterminado()
-        if nombre is None:
-            raise ProfileError(MotivoPerfil.SIN_PREDETERMINADO)
-        perfil = store.obtener(nombre)
-        clave = secrets.leer_clave(perfil.name)
-        if clave is None:
-            typer.echo(messages.AVISO_CLAVE_NO_GUARDADA.format(nombre=perfil.name))
-            clave = _pedir_clave_nueva(messages.PEDIR_CLAVE_DOCTOR)
+        perfil = _perfil(name)
+        clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA)
         reporte = _probar(perfil, clave)
         render.reporte_diagnostico(reporte)
         if reporte.status is not EstadoDiagnostico.OK:
             raise typer.Exit(code=SALIDA_ERROR_P6)
+
+
+# --- Catálogo y consultas -------------------------------------------------------
+
+ArgumentoEndpoint = Annotated[str, typer.Argument(help=messages.AYUDA_ARG_ENDPOINT)]
+OpcionEnv = Annotated[str | None, typer.Option("--env", help=messages.AYUDA_OPCION_ENV)]
+
+
+def _endpoint_entity(clave: str) -> Endpoint:
+    """Endpoint del catálogo que admite lectura simple (plantilla ``entity``)."""
+    endpoint = catalog.obtener(clave)
+    if endpoint.template is not Plantilla.ENTITY:
+        raise UsageError(MotivoUso.PLANTILLA_NO_SOPORTADA, endpoint=endpoint.key)
+    return endpoint
+
+
+def _esperando() -> AbstractContextManager[Any]:
+    """Indicador de espera en stderr, para no mezclarse con la salida de datos."""
+    return Console(stderr=True).status(messages.ESPERANDO_RESPUESTA)
+
+
+@app.command("endpoints", help=messages.AYUDA_ENDPOINTS)
+def endpoints(
+    group: Annotated[str | None, typer.Option("--group", help=messages.AYUDA_OPCION_GRUPO)] = None,
+) -> None:
+    """Lista el catálogo, opcionalmente filtrado por grupo (sin distinguir mayúsculas)."""
+    entradas = list(enumerate(catalog.CATALOGO, start=1))
+    if group is not None:
+        buscado = group.strip().casefold()
+        grupo = next((g for g in catalog.grupos() if g.casefold() == buscado), None)
+        if grupo is None:
+            typer.echo(
+                messages.GRUPO_INEXISTENTE.format(grupo=group, grupos=", ".join(catalog.grupos())),
+                err=True,
+            )
+            raise typer.Exit(code=SALIDA_ERROR_USO)
+        entradas = [(numero, e) for numero, e in entradas if e.group == grupo]
+    render.tabla_endpoints(entradas)
+
+
+@app.command("syntax", help=messages.AYUDA_SYNTAX)
+def sintaxis(
+    tema: Annotated[str | None, typer.Argument(help=messages.AYUDA_ARG_TEMA)] = None,
+) -> None:
+    """Guía de sintaxis de un tema; sin tema, lista los temas. No toca la red ni los perfiles."""
+    guias = messages.GUIAS_SINTAXIS
+    if tema is None:
+        render.lista_temas(guias)
+        return
+    guia = guias.get(tema.strip().lower())
+    if guia is None:
+        typer.echo(
+            messages.TEMA_INEXISTENTE.format(tema=tema, temas=", ".join(guias)),
+            err=True,
+        )
+        raise typer.Exit(code=SALIDA_ERROR_USO)
+    render.guia_sintaxis(guia)
+
+
+@app.command("fields", help=messages.AYUDA_FIELDS)
+def campos(endpoint: ArgumentoEndpoint, env: OpcionEnv = None) -> None:
+    """Campos válidos de un endpoint ``entity``, consultados en vivo."""
+    with _errores_a_salida():
+        destino = _endpoint_entity(endpoint)
+        perfil = _perfil(env)
+        clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
+        with Sesion(perfil, clave) as sesion, _esperando():
+            lista = Cliente(sesion).fields(destino)
+        render.lista_campos(destino.key, lista)
+
+
+@app.command("get", help=messages.AYUDA_GET)
+def get(
+    endpoint: ArgumentoEndpoint,
+    fields: Annotated[str, typer.Option("--fields", help=messages.AYUDA_OPCION_FIELDS)],
+    filtro: Annotated[str, typer.Option("--filter", help=messages.AYUDA_OPCION_FILTER)] = "",
+    orden: Annotated[str, typer.Option("--order-by", help=messages.AYUDA_OPCION_ORDER_BY)] = "",
+    env: OpcionEnv = None,
+    allow_unfiltered: Annotated[
+        bool, typer.Option("--allow-unfiltered", help=messages.AYUDA_OPCION_ALLOW_UNFILTERED)
+    ] = False,
+    max_rows: Annotated[
+        int, typer.Option("--max-rows", min=0, help=messages.AYUDA_OPCION_MAX_ROWS)
+    ] = render.FILAS_TABLA,
+    como_json: Annotated[bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON)] = False,
+) -> None:
+    """Lectura simple. Valida todo antes de pedir la clave y de hacer el login."""
+    with _errores_a_salida():
+        destino = _endpoint_entity(endpoint)
+        perfil = _perfil(env)
+        params = {FIELDS: fields, FILTER: filtro, ORDER_BY: orden}
+        consulta = validar_consulta(perfil, destino, params, allow_unfiltered=allow_unfiltered)
+        clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
+        inicio = time.perf_counter()
+        with Sesion(perfil, clave) as sesion, _esperando():
+            filas = Cliente(sesion).get(destino, params, allow_unfiltered=allow_unfiltered)
+        segundos = time.perf_counter() - inicio
+        if como_json:
+            typer.echo(json.dumps(filas, indent=2, ensure_ascii=False))
+            return
+        render.tabla_resultados(
+            filas,
+            consulta[FIELDS].split(","),
+            max_rows,
+            render.encabezado_resultados(destino.key, len(filas), segundos),
+        )

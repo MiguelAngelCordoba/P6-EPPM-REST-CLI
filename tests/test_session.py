@@ -6,9 +6,16 @@ import pytest
 import requests
 import responses
 
-from p6cli.core.errors import AuthError, MotivoAuth, MotivoHTTP, P6HTTPError
+from p6cli.core.errors import (
+    AuthError,
+    MotivoAuth,
+    MotivoHTTP,
+    MotivoUso,
+    P6HTTPError,
+    UsageError,
+)
 from p6cli.core.profiles import Profile
-from p6cli.core.session import TIEMPO_CONEXION, Sesion, token_autenticacion
+from p6cli.core.session import TIEMPO_CONEXION, Sesion, token_autenticacion, url_get
 from tests.conftest import (
     BASE,
     LOGIN_OK,
@@ -247,6 +254,42 @@ def test_errores_de_red_se_traducen_sin_encadenar(
     assert capturado.value.__cause__ is None
     assert capturado.value.__context__ is None
     assert CLAVE not in str(capturado.value)
+
+
+# --- Solo lectura ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("metodo", "ruta"),
+    [("PUT", "/project"), ("PATCH", "/project"), ("DELETE", "/project"), ("POST", "/project")],
+)
+def test_verbos_de_escritura_se_rechazan_sin_enviar(
+    http_simulado: responses.RequestsMock, metodo: str, ruta: str
+) -> None:
+    with pytest.raises(UsageError) as capturado:
+        sesion()._enviar(metodo, ruta, {}, {})
+
+    assert capturado.value.motivo is MotivoUso.METODO_NO_PERMITIDO
+    assert len(http_simulado.calls) == 0
+
+
+def test_url_get_coincide_con_la_url_enviada(http_simulado: responses.RequestsMock) -> None:
+    params = {"Fields": "ObjectId,Name", "Filter": "Name:like:'a%'"}
+    registrar(http_simulado, "GET", "/project", Simulada(200, cuerpo="[]"))
+
+    sesion().get("/project", params)
+
+    assert http_simulado.calls[0].request.url == url_get(perfil(), "/project", params)
+
+
+def test_login_intentado(http_simulado: responses.RequestsMock) -> None:
+    registrar(http_simulado, "POST", "/login", LOGIN_RECHAZADO)
+    s = sesion()
+    assert not s.login_intentado
+
+    s.login()
+
+    assert s.login_intentado
 
 
 # --- Secretos -------------------------------------------------------------------

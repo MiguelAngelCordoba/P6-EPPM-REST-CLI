@@ -135,7 +135,8 @@ APACHE_404 = Simulada(404, "apache_404.html")
 INTERFAZ_WEB_401 = Simulada(401, "ui_401_login.html")
 COMODIN_POST = Simulada(200, content_type=None)
 COMODIN_GET = Simulada(405, "comodin_405.html")
-FIELDS_OK = Simulada(200, "project_fields.json")
+# P6 responde /fields con Content-Type JSON, pero el cuerpo es texto plano con comas.
+FIELDS_OK = Simulada(200, "project_fields.txt", content_type="application/json")
 CANARIO_404 = Simulada(404, cuerpo="", content_type=None)
 LOGOUT_OK = Simulada(200, content_type=None)
 

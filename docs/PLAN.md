@@ -16,7 +16,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M1 | Esqueleto y calidad | ✅ |
 | M2 | Perfiles, secretos y URLs | ✅ |
 | M3 | Autenticación y diagnóstico | ✅ |
-| M4 | Catálogo, cliente y comandos básicos | ⬜ |
+| M4 | Catálogo, cliente y comandos básicos | ✅ |
 | M5 | Flujo interactivo | ⬜ |
 | M6 | Lecturas masivas y spread | ⬜ |
 | M7 | Exportación | ⬜ |
@@ -121,13 +121,34 @@ Especificación: §6, §7. Leer `APRENDIZAJES.md` completo antes de empezar.
 
 Especificación: §8, §9, §12, §13 (tabla y JSON en pantalla), §14.
 
-- [ ] `core/catalog.py`: modelos, plantillas `entity`/`spread`/`custom` y catálogo inicial §8.3.
-- [ ] `core/client.py`: `get`, `fields`, guardarraíl `large`, completado de Filter/OrderBy, validación de content-type y de longitud de URL.
-- [ ] `core/errors.py`: jerarquía y pistas §14.
-- [ ] Comandos: `p6 endpoints`, `p6 fields`, `p6 get` con `--json`, `--max-rows`, `--allow-unfiltered`.
-- [ ] Códigos de salida §12.
+- [x] `core/catalog.py`: modelos, plantillas `entity`/`spread`/`custom` y catálogo inicial §8.3.
+- [x] `core/client.py`: `get`, `fields`, guardarraíl `large`, completado de Filter/OrderBy, validación de content-type y de longitud de URL.
+- [x] `core/errors.py`: jerarquía y pistas §14.
+- [x] Comandos: `p6 endpoints`, `p6 fields`, `p6 get` con `--json`, `--max-rows`, `--allow-unfiltered`.
+- [x] Códigos de salida §12.
 
-**Validación manual (tú):** `p6 get project --fields ObjectId,Id,Name` contra tu instancia de pruebas.
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- `--max-rows N` limita solo las filas de la tabla (25 por defecto, `0` = todas); `--json` imprime siempre la lista completa.
+- `get` y `fields` sin clave guardada la piden oculta, la usan solo en esa ejecución y no la guardan (como `doctor`).
+- Un login fallido en `get`/`fields` se clasifica con las filas 5–9 de §7, sin peticiones extra, y sugiere `p6 doctor NAME`. Salida 1.
+- Toda la validación (parámetros, guardarraíl, largo de URL) ocurre antes de pedir la clave y de hacer login.
+- `/fields` se acepta como lista JSON o como texto separado por comas, hasta confirmar el formato real.
+- Ctrl+C (también dentro de una pregunta) sale con 130 y `Aborted!`.
+
+**Validación manual (tú)** — no hay instancia de pruebas: se hace contra productivo, solo con lecturas acotadas.
+
+- [x] `p6 get project --fields ObjectId,Id,Name`, filtros, `--max-rows`, `--order-by` y `--json`.
+- [x] `p6 fields project` → reveló que `/fields` es texto plano con comas, no JSON válido (corregido).
+- [x] Filtro sin resultados → `200 []`. Campo inexistente → 400 `<Campo> is not a valid field.`
+- [ ] Repetir `p6 fields project`, `p6 endpoints` y `p6 syntax filter` tras los ajustes.
+
+**Ajustes tras la validación manual** (detalle en `ESPECIFICACION.md` §18):
+
+- `/fields` se lee como texto plano separado por comas (también acepta JSON).
+- `p6 endpoints` muestra `Tasks` (clave) y `Name` (título en Oracle) con la ruta exacta; las 14 páginas se revisaron y quedan `doc_verified`.
+- Nuevo `p6 syntax [TEMA]`: guías de `filter`, `order-by` y `fields` desde la documentación oficial.
+- `--fields` con espacios sin comillas no se une: lo parte la terminal.
 
 **Practica de Claude Code:** configurar un hook que ejecute `ruff format` y `ruff check` después de cada edición.
 
