@@ -392,7 +392,9 @@ activity · 1.284 filas · 3,2 s
 [tabla con las primeras 25 filas]
 
 ? ¿Qué sigue?
- ❯ Exportar a CSV
+ ❯ Ver la tabla completa (1.284 filas)
+   Ver el JSON completo
+   Exportar a CSV
    Exportar a JSON
    Nueva consulta en este endpoint (conserva los parámetros)
    Otro endpoint
@@ -408,8 +410,7 @@ activity · 1.284 filas · 3,2 s
 
 ```
 GET /activity — Actividades
-Consulta la documentación de Oracle para nombres de campos y sintaxis de filtros.
-Escribe ? en Fields para ver los campos válidos de este endpoint.
+Consulta la documentación de Oracle o escribe ? en cualquier campo para ver ayuda aquí mismo.
 
 (Obligatorio) Fields  : 
 (Opcional)    Filter  : 
@@ -420,7 +421,9 @@ Escribe ? en Fields para ver los campos válidos de este endpoint.
 
 1. **Sin valores preseleccionados.** El usuario escribe lo que necesita, con la documentación de Oracle a mano.
 2. **Fields vacío** → mensaje *"Se necesita al menos un campo en Fields."* y el formulario reaparece conservando lo escrito en Filter y OrderBy.
-3. **`?` en Fields** → lista los campos válidos consultando `{path}/fields` en vivo, en columnas, y vuelve a pedir Fields.
+3. **`?` en cualquier campo** muestra su ayuda y vuelve a pedir ese mismo campo, conservando lo ya escrito:
+   - **Fields** → lista los campos válidos consultando `{path}/fields` en vivo, en columnas.
+   - **Filter** → la guía de `p6 syntax filter`; **OrderBy** → la guía de `p6 syntax order-by`. Sin red. Al final se avisa que en el formulario el valor va sin comillas dobles alrededor.
 4. **Normalización de Fields:** separar por comas, quitar espacios, eliminar duplicados preservando el orden. Cada campo debe cumplir `^[A-Za-z][A-Za-z0-9_]*$`; si no, mensaje y el formulario reaparece.
 5. **Filter y OrderBy** se envían tal cual los escribe el usuario.
 6. **Filter vacío en un endpoint `large`** → confirmación: *"Sin filtro se traerán todos los registros de `<endpoint>` de la instancia. ¿Continuar?"* (por defecto: No).
@@ -620,3 +623,17 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | `--fields ObjectId, Id, Name` sin comillas no se une: la terminal parte los argumentos en cada espacio, y con comillas ya funciona | Decisión del usuario: es comportamiento de la terminal, no del programa |
 | Ctrl+C, también dentro de una pregunta (`Abort` de Typer), sale con 130 y el mensaje estándar `Aborted!` en todos los comandos | Código de §12; Typer por sí solo sale con 1 al abortar una pregunta |
 | `normalizar_campos` distingue `CAMPOS_VACIOS` («Se necesita al menos un campo en Fields.») de `PARAMETRO_REQUERIDO` | Mensaje de §11.1, regla 2, reutilizable en M5 |
+| El asistente de perfiles vive en `cli/forms.py` sobre el `Prompter`. Los menús usan `PrompterQuestionary` (listas con flechas); `p6 profiles add/edit` usan `PrompterTexto` (`typer.prompt`), donde cada opción se elige por su tecla (`y · n · ca`, `c · g · x`), Enter toma la opción por defecto y otra respuesta repregunta con «Responde …» | Una sola lógica para los dos modos; los comandos siguen funcionando con entrada redirigida |
+| `Prompter` usa `Opcion(titulo, valor, tecla, deshabilitada)` y `Separador(titulo)`. `PrompterQuestionary` pregunta con `unsafe_ask`: Ctrl+C lanza `KeyboardInterrupt` y sale con 130 y `Aborted!` | Una opción se identifica por su posición, no por cómo se comparan los valores; Ctrl+C no se confunde con una respuesta vacía |
+| La clave se pide sin eco también en los menús (`typer.prompt(hide_input=True)`), no con `questionary.password` | `questionary.password` muestra un `*` por carácter y revelaría la longitud (§4.3) |
+| Las opciones de hitos posteriores se ven deshabilitadas con «(próximamente)»: endpoints spread (M6) y Exportar a CSV/JSON (M7) | El flujo ya tiene la forma final de §10 sin ofrecer algo que no funciona |
+| «Continuar» (§10.2) ejecuta `diagnosticar(sesion)`: login, `/project/fields` y canario, con el único intento de login de la sesión. Si da OK, esa sesión atiende todas las consultas del ambiente; si no, se muestra el diagnóstico y solo se ofrece *Actualizar credenciales* o *Volver al inicio* | Explica la causa de un fallo con §7 sin gastar un segundo intento |
+| En §10.2, si el perfil no tiene clave guardada, se pide oculta, se usa solo en esa sesión y no se guarda; la pantalla muestra `•••••••• (no guardada)` | Mismo criterio que `doctor`, `get` y `fields`; para guardarla está «Actualizar credenciales» |
+| «Actualizar credenciales» pide usuario (actual por defecto) y clave, y diagnostica con una sesión nueva. Si da OK, guarda ambos y sigue al menú de endpoints con esa misma sesión; si falla, no guarda nada. Si solo falla el keyring al guardar, se avisa y se sigue conectado | Un login por decisión del usuario, nunca dos |
+| La sesión de cada ambiente vive en un `with`: el logout ocurre al cambiar de ambiente, al salir y también ante Ctrl+C | §6: logout al salir o al cambiar de ambiente, sin excepciones |
+| Sin perfiles al abrir, la bienvenida y el asistente aparecen una sola vez; si se cancela, se muestra el menú de inicio | Evita un bucle entre la bienvenida y el asistente |
+| En el formulario `entity` todo se valida antes de la confirmación (Fields, largo de URL y confirmación sin filtro en endpoints `large`, por defecto No). Cualquier error al ejecutar (no solo el 400) muestra mensaje y pista, y el formulario reaparece con lo escrito. «Cancelar» vuelve al menú de endpoints | Regla 7 de §11.1 aplicada a todo error de la consulta |
+| El comando equivalente (§11.3) es `p6 get KEY --env PERFIL --fields "..."`, con `--filter` y `--order-by` solo si se escribieron y `--allow-unfiltered` si se confirmó sin filtro; los valores van entre comillas dobles | Repite exactamente la consulta enviada en modo flags |
+| En los menús, la tabla muestra 25 filas con el aviso «Mostrando 25 de N filas.», sin mencionar `--max-rows` ni `--json` | Esas opciones son del modo flags; la exportación llega en M7 |
+| `?` funciona en los tres campos del formulario `entity`: Fields lista los campos válidos; Filter y OrderBy muestran la guía de `p6 syntax` más el aviso de escribir el valor sin comillas dobles alrededor. Luego se vuelve a pedir el mismo campo. La cabecera dice «Consulta la documentación de Oracle o escribe ? en cualquier campo para ver ayuda aquí mismo.» | Pedido del usuario tras la validación manual: `?` en Filter u OrderBy se enviaba a P6 y la consulta fallaba; la documentación de Oracle y la ayuda en la terminal son caminos alternativos, no ambos obligatorios. Los ejemplos de las guías son de línea de comandos, donde sí se usan comillas |
+| «¿Qué sigue?» ofrece «Ver la tabla completa (N filas)», solo con más de 25 filas, y «Ver el JSON completo», con al menos una fila. Usan las filas ya recibidas, sin consultar de nuevo a P6, y luego vuelve el mismo menú. La tabla completa sigue recortando celdas a 40 caracteres; el JSON va completo (indentación 2, sin escapar tildes), como `p6 get --json`. Con más de 500 filas se pide confirmar, por defecto No | Pedido del usuario tras la validación manual: ver la salida completa sin exportar. Con miles de filas la terminal tarda, el inicio se pierde al desplazarse y un Ctrl+C a mitad cierra el programa |

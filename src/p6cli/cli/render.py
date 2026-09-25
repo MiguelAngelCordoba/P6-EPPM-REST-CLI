@@ -1,18 +1,22 @@
 """Tablas, paneles y progreso con rich."""
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 from rich.text import Text
 
+from p6cli import __version__
 from p6cli.cli import messages
 from p6cli.core.catalog import Endpoint
 from p6cli.core.diagnostics import DiagnosticReport, EstadoDiagnostico
+from p6cli.core.errors import MotivoAuth, MotivoHTTP, P6CliError
 from p6cli.core.profiles import Profile
 
 # Salida tabular de resultados (§13).
@@ -106,6 +110,29 @@ def reporte_diagnostico(reporte: DiagnosticReport) -> None:
     consola.print(tabla)
 
 
+# --- Errores --------------------------------------------------------------------
+
+
+def texto_error(error: P6CliError) -> str:
+    """Mensaje del error; agrega la pista por código HTTP o el diagnóstico del login."""
+    lineas = [messages.ERRORES[error.motivo].format(**error.datos)]
+    if error.motivo is MotivoHTTP.CODIGO_HTTP:
+        pista = messages.PISTAS_HTTP.get(int(error.datos["codigo"]))
+        if pista is not None:
+            lineas.append(messages.PISTA.format(pista=pista))
+    elif error.motivo is MotivoAuth.LOGIN_FALLIDO:
+        estado = EstadoDiagnostico(error.datos["estado"])
+        lineas.extend(texto for texto in textos_estado(estado, error.datos) if texto)
+        lineas.append(messages.SUGERENCIA_DOCTOR.format(perfil=error.datos["perfil"]))
+    return "\n".join(lineas)
+
+
+def mostrar_error(error: P6CliError) -> None:
+    """Imprime el mensaje del error en stderr."""
+    # Text evita que rich interprete como marcado lo que venga en los mensajes de P6.
+    Console(stderr=True).print(Text(texto_error(error)), soft_wrap=True)
+
+
 # --- Catálogo y resultados ------------------------------------------------------
 
 
@@ -170,7 +197,7 @@ def texto_celda(valor: Any) -> str:
     return texto
 
 
-def _numero(valor: int) -> str:
+def numero(valor: int) -> str:
     """Entero con punto de miles: 1.284."""
     return f"{valor:,}".replace(",", ".")
 
@@ -179,16 +206,23 @@ def encabezado_resultados(endpoint: str, filas: int, segundos: float) -> str:
     """«activity · 1.284 filas · 3,2 s»."""
     return messages.ENCABEZADO_RESULTADOS.format(
         endpoint=endpoint,
-        filas=_numero(filas),
+        filas=numero(filas),
         unidad=messages.UNIDAD_FILA if filas == 1 else messages.UNIDAD_FILAS,
         segundos=f"{segundos:.1f}".replace(".", ","),
     )
 
 
 def tabla_resultados(
-    filas: Sequence[Mapping[str, Any]], campos: Sequence[str], max_filas: int, encabezado: str
+    filas: Sequence[Mapping[str, Any]],
+    campos: Sequence[str],
+    max_filas: int,
+    encabezado: str,
+    aviso: str = messages.AVISO_FILAS_MOSTRADAS,
 ) -> None:
-    """Imprime las primeras ``max_filas`` filas (0 = todas) con columnas en el orden de Fields."""
+    """Imprime las primeras ``max_filas`` filas (0 = todas) con columnas en el orden de Fields.
+
+    ``aviso`` es el texto que se muestra cuando la tabla no incluye todas las filas.
+    """
     consola = Console()
     consola.print(Text(encabezado, style="bold"))
     if not filas:
@@ -203,11 +237,93 @@ def tabla_resultados(
         tabla.add_row(*(Text(texto_celda(fila.get(campo))) for campo in campos))
     consola.print(tabla)
     if len(mostradas) < len(filas):
-        consola.print(
-            messages.AVISO_FILAS_MOSTRADAS.format(
-                mostradas=_numero(len(mostradas)), total=_numero(len(filas))
-            )
-        )
+        consola.print(aviso.format(mostradas=numero(len(mostradas)), total=numero(len(filas))))
+
+
+def json_resultados(filas: Sequence[Mapping[str, Any]]) -> None:
+    """Imprime la respuesta completa como JSON (indentación 2, sin escapar tildes)."""
+    texto = json.dumps(filas, indent=2, ensure_ascii=False)
+    # Text sin resaltado: corchetes y % de los datos no se interpretan; sin cortes de línea.
+    Console().print(Text(texto), soft_wrap=True, highlight=False)
+
+
+# --- Flujo interactivo (§10 y §11) ------------------------------------------------
+
+
+def banner() -> None:
+    """Título del flujo interactivo con la versión instalada."""
+    Console().print(Text(messages.BANNER.format(version=__version__), style="bold"))
+
+
+def pantalla_credenciales(perfil: Profile, temporal: bool) -> None:
+    """Datos del ambiente elegido (§10.2). La clave siempre se muestra enmascarada.
+
+    ``temporal`` indica que la clave se escribió para esta sesión y no está guardada.
+    """
+    clave = messages.CLAVE_ENMASCARADA
+    if temporal:
+        clave = f"{clave}   {messages.CLAVE_NO_GUARDADA}"
+    consola = Console()
+    consola.print()
+    for linea in (
+        messages.ETIQUETA_AMBIENTE.format(
+            nombre=perfil.name,
+            host=perfil.host,
+            context=perfil.context,
+            database=perfil.database_name,
+        ),
+        messages.ETIQUETA_USUARIO.format(usuario=perfil.username),
+        messages.ETIQUETA_CLAVE.format(clave=clave),
+    ):
+        consola.print(Text(linea), soft_wrap=True)
+    consola.print()
+
+
+def cabecera_formulario(endpoint: Endpoint) -> None:
+    """Encabezado del formulario ``entity`` con la ayuda de §11.1."""
+    consola = Console()
+    consola.print()
+    titulo = messages.CABECERA_FORMULARIO.format(
+        ruta=endpoint.path, descripcion=endpoint.description
+    )
+    consola.print(Text(titulo, style="bold"))
+    for linea in messages.AYUDA_FORMULARIO:
+        consola.print(Text(linea))
+    consola.print()
+
+
+def confirmacion_consulta(
+    ruta: str, parametros: Sequence[tuple[str, str, bool]], equivalente: str
+) -> None:
+    """Resumen de la consulta antes de ejecutarla (§11.3).
+
+    Cada parámetro es ``(nombre, valor, por_defecto)``; ``por_defecto`` marca los valores
+    neutros que completa el cliente. El comando equivalente no se parte: se copia tal cual.
+    """
+    ancho = max((len(nombre) for nombre, _, _ in parametros), default=0)
+    consola = Console()
+    consola.print()
+    consola.print(Text(messages.CONFIRMACION_RUTA.format(ruta=ruta), style="bold"))
+    for nombre, valor, por_defecto in parametros:
+        linea = f"  {nombre:<{ancho}} : {valor}"
+        if por_defecto:
+            linea = f"{linea}   {messages.MARCA_POR_DEFECTO}"
+        consola.print(Text(linea), soft_wrap=True)
+    consola.print(Text("  " + messages.EQUIVALE_A.format(comando=equivalente)), soft_wrap=True)
+    consola.print()
+
+
+@contextmanager
+def progreso_consulta() -> Iterator[None]:
+    """Indicador de espera con el tiempo transcurrido; desaparece al terminar."""
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        TimeElapsedColumn(),
+        transient=True,
+    ) as progreso:
+        progreso.add_task(messages.ESPERANDO_RESPUESTA, total=None)
+        yield
 
 
 # --- Guías de sintaxis ----------------------------------------------------------

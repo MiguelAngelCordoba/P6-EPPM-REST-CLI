@@ -19,9 +19,14 @@ AYUDA_VERSION = "Muestra la versión y termina."
 
 VERSION = "p6cli {version}"
 
-AVISO_SIN_MENUS = (
-    "El modo interactivo aún no está disponible. Usa `p6 --help` para ver las opciones."
-)
+# --- Preguntas (Prompter) ------------------------------------------------------
+
+LINEA_SEPARADOR = "─" * 13
+# PrompterTexto muestra las opciones de una lista con su tecla: «(y = Sí · n = No)».
+OPCION_CON_TECLA = "{tecla} = {titulo}"
+SEPARADOR_OPCIONES = " · "
+CONJUNCION_O = " o "
+RESPUESTA_OPCION_INVALIDA = "Responde {opciones}."
 
 # --- Perfiles: ayuda de comandos ---------------------------------------------
 
@@ -44,13 +49,15 @@ PEDIR_DATABASE = "DatabaseName"
 PEDIR_USUARIO = "Usuario"
 PEDIR_CLAVE = "Clave (oculta)"
 PEDIR_CLAVE_EDITAR = "Clave (oculta; Enter para conservar la actual)"
-PEDIR_TLS = "¿Validar el certificado TLS? (y = sí · n = no · ca = usar CA propia .pem)"
+PEDIR_TLS = "¿Validar el certificado TLS?"
+TITULO_TLS_SI = "Sí"
+TITULO_TLS_NO = "No"
+TITULO_TLS_CA = "Usar CA propia (.pem)"
 PEDIR_CA = "Ruta al archivo .pem de la CA"
 AVISO_EDITAR = "Presiona Enter en cada campo para conservar su valor actual."
 
 DATO_OBLIGATORIO = "Este dato es obligatorio."
 CLAVE_VACIA = "La clave no puede estar vacía."
-OPCION_TLS_INVALIDA = "Responde y, n o ca."
 CA_NO_EXISTE = "No se encontró el archivo: {ruta}"
 
 ADVERTENCIA_SIN_CIFRADO = (
@@ -67,7 +74,7 @@ RESPUESTA_SI = "y"
 RESPUESTA_NO = "n"
 RESPUESTA_SI_NO_INVALIDA = "Responde y o n."
 
-# Opciones aceptadas en la pregunta de TLS.
+# Teclas de la pregunta de TLS en los comandos con flags.
 TLS_SI = "y"
 TLS_NO = "n"
 TLS_CA = "ca"
@@ -122,14 +129,15 @@ AVISO_CLAVE_NO_GUARDADA = (
 PEDIR_CLAVE_TEMPORAL = "Clave (oculta; no se guardará)"
 CLAVE_REQUERIDA_PRUEBA = "El perfil no tiene clave guardada: escríbela para probar la conexión."
 
-# Opciones cuando la prueba de conexión falla al agregar o editar un perfil.
-PREGUNTA_FALLO_CONEXION = (
-    "¿Qué hacemos? (c = corregir datos · g = guardar de todas formas · x = cancelar)"
-)
-OPCION_CORREGIR = "c"
-OPCION_GUARDAR = "g"
-OPCION_CANCELAR = "x"
-OPCION_FALLO_INVALIDA = "Responde c, g o x."
+# Opciones cuando la prueba de conexión falla al agregar o editar un perfil (§10.3).
+# Las teclas son las que se escriben en los comandos con flags.
+PREGUNTA_FALLO_CONEXION = "¿Qué hacemos?"
+TITULO_CORREGIR = "Corregir datos"
+TITULO_GUARDAR = "Guardar de todas formas"
+TITULO_CANCELAR = "Cancelar"
+TECLA_CORREGIR = "c"
+TECLA_GUARDAR = "g"
+TECLA_CANCELAR = "x"
 
 TITULO_DIAGNOSTICO = "Diagnóstico · {estado}"
 COLUMNA_METODO = "Método"
@@ -396,6 +404,99 @@ GUIAS_SINTAXIS: dict[str, GuiaSintaxis] = {
         referencia=f"{_DOC_ORACLE}/op-activity-fields-get.html",
     ),
 }
+
+# --- Flujo interactivo: inicio (§10.1) --------------------------------------------
+
+BANNER = "P6 EPPM REST CLI  v{version} — solo lectura"
+BIENVENIDA = "Aún no hay ambientes guardados. Agreguemos el primero."
+PREGUNTA_AMBIENTE = "¿Qué ambiente quieres consultar?"
+MARCA_PREDETERMINADO_MENU = "(predeterminado)"
+OPCION_AGREGAR = "+ Agregar ambiente"
+OPCION_ADMINISTRAR = "⚙ Administrar ambientes"
+OPCION_SALIR = "Salir"
+OPCION_VOLVER = "Volver"
+
+# --- Flujo interactivo: credenciales (§10.2) --------------------------------------
+
+ETIQUETA_AMBIENTE = "Ambiente : {nombre}   ({host}/{context} · {database})"
+ETIQUETA_USUARIO = "Usuario  : {usuario}"
+ETIQUETA_CLAVE = "Clave    : {clave}"
+CLAVE_NO_GUARDADA = "(no guardada)"
+AVISO_CLAVE_SESION = (
+    "El ambiente «{nombre}» no tiene clave guardada. La que escribas se usará solo en esta "
+    "sesión; para guardarla elige «Actualizar credenciales»."
+)
+PREGUNTA_CREDENCIALES = "¿Cómo continuamos?"
+OPCION_CONTINUAR = "Continuar con estas credenciales"
+OPCION_ACTUALIZAR = "Actualizar credenciales"
+OPCION_VOLVER_INICIO = "Volver al inicio"
+PREGUNTA_LOGIN_FALLIDO = "No se pudo conectar. ¿Qué hacemos?"
+CREDENCIALES_GUARDADAS = "Credenciales de «{nombre}» guardadas."
+
+# --- Flujo interactivo: administrar ambientes (§10.4) -----------------------------
+
+PREGUNTA_ADMINISTRAR = "¿Qué ambiente quieres administrar?"
+PREGUNTA_ACCION_PERFIL = "¿Qué hacemos con «{nombre}»?"
+OPCION_EDITAR = "Editar"
+OPCION_PROBAR = "Probar conexión"
+OPCION_PREDETERMINADO = "Marcar como predeterminado"
+OPCION_ELIMINAR = "Eliminar"
+SIN_PERFILES_MENU = "No hay ambientes guardados."
+SIN_PREDETERMINADO_MENU = (
+    "Ya no hay ambiente predeterminado. Márcalo desde «Administrar ambientes»."
+)
+AVISO_CLAVE_PRUEBA_MENU = (
+    "El ambiente «{nombre}» no tiene clave guardada. La que escribas se usará solo para esta "
+    "prueba; para guardarla elige «Editar»."
+)
+
+# --- Flujo interactivo: endpoints (§10.5) -----------------------------------------
+
+PREGUNTA_ENDPOINT = "¿Qué quieres consultar?"
+OPCION_CAMBIAR_AMBIENTE = "Cambiar ambiente"
+# Opciones que se implementan en hitos posteriores (spread en M6, exportación en M7).
+PROXIMAMENTE = "próximamente"
+
+# --- Formulario entity (§11.1) y confirmación (§11.3) -------------------------------
+
+CABECERA_FORMULARIO = "GET {ruta} — {descripcion}"
+AYUDA_FORMULARIO = (
+    "Consulta la documentación de Oracle o escribe ? en cualquier campo para ver ayuda aquí mismo.",
+)
+ETIQUETA_FIELDS = "(Obligatorio) Fields  :"
+ETIQUETA_FILTER = "(Opcional)    Filter  :"
+ETIQUETA_ORDER_BY = "(Opcional)    OrderBy :"
+# ? en cualquier campo: Fields lista los campos válidos; Filter y OrderBy, la guía de sintaxis.
+PEDIR_AYUDA = "?"
+AVISO_SINTAXIS_FORMULARIO = (
+    "En este formulario escribe el valor sin comillas dobles alrededor; los ejemplos de "
+    "arriba son para la línea de comandos."
+)
+CONFIRMAR_SIN_FILTRO = (
+    "Sin filtro se traerán todos los registros de «{endpoint}» de la instancia. ¿Continuar?"
+)
+CONFIRMACION_RUTA = "GET {ruta}"
+MARCA_POR_DEFECTO = "(por defecto)"
+EQUIVALE_A = "Equivale a: {comando}"
+PREGUNTA_EJECUTAR = "¿Ejecutar?"
+OPCION_EJECUTAR = "Ejecutar"
+OPCION_EDITAR_CONSULTA = "Editar"
+OPCION_CANCELAR_CONSULTA = "Cancelar"
+
+# --- Resultados y siguiente paso (§10.7) -------------------------------------------
+
+PREGUNTA_SIGUIENTE = "¿Qué sigue?"
+OPCION_VER_TABLA = "Ver la tabla completa ({filas} filas)"
+OPCION_VER_JSON = "Ver el JSON completo"
+CONFIRMAR_SALIDA_COMPLETA = (
+    "Se imprimirán {filas} filas en la terminal; puede tardar y el inicio quedará fuera de "
+    "la pantalla. ¿Mostrar de todas formas?"
+)
+OPCION_EXPORTAR_CSV = "Exportar a CSV"
+OPCION_EXPORTAR_JSON = "Exportar a JSON"
+OPCION_NUEVA_CONSULTA = "Nueva consulta en este endpoint (conserva los parámetros)"
+OPCION_OTRO_ENDPOINT = "Otro endpoint"
+AVISO_FILAS_MOSTRADAS_MENU = "Mostrando {mostradas} de {total} filas."
 
 # Mensaje estándar de la librería al interrumpir: se deja en inglés a propósito.
 ABORTADO = "Aborted!"
