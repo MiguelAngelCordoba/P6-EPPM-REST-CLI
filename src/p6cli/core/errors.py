@@ -79,6 +79,9 @@ class MotivoUso(StrEnum):
     ARCHIVO_IDS_EXTENSION = "archivo_ids_extension"
     ARCHIVO_IDS_ILEGIBLE = "archivo_ids_ilegible"
     ARCHIVO_IDS_SIN_COLUMNA = "archivo_ids_sin_columna"
+    EXTENSION_SALIDA = "extension_salida"
+    ARCHIVO_SALIDA_NO_ESCRIBIBLE = "archivo_salida_no_escribible"
+    JSON_CON_OUTPUT = "json_con_output"
 
 
 class MotivoGuardarrail(StrEnum):

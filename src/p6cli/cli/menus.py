@@ -10,7 +10,9 @@ import dataclasses
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 import typer
 
@@ -22,6 +24,14 @@ from p6cli.core.catalog import Endpoint, Plantilla
 from p6cli.core.client import Cliente, Fila, filas_por_periodo
 from p6cli.core.diagnostics import EstadoDiagnostico, diagnosticar
 from p6cli.core.errors import P6CliError
+from p6cli.core.export import (
+    CARPETA_EXPORTACION,
+    Formato,
+    escribir_csv,
+    escribir_json,
+    filas_spread_largo,
+    nombre_archivo,
+)
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import Sesion
 
@@ -44,6 +54,8 @@ class Accion(Enum):
     VER_JSON = "ver_json"
     EXPORTAR_CSV = "exportar_csv"
     EXPORTAR_JSON = "exportar_json"
+    DE_ACUERDO = "de_acuerdo"
+    CAMBIAR_RUTA = "cambiar_ruta"
     NUEVA_CONSULTA = "nueva_consulta"
     OTRO_ENDPOINT = "otro_endpoint"
     EDITAR = "editar"
@@ -327,14 +339,20 @@ class Resultado:
     """Lo recibido de P6 y cómo se muestra.
 
     ``tabla`` y ``columnas`` son las filas de la tabla; ``respuesta`` es lo que devolvió P6,
-    para «Ver el JSON completo». En ``entity`` son lo mismo; en spread, la tabla tiene una
-    fila por objeto y período.
+    para «Ver el JSON completo» y «Exportar a JSON». En ``entity`` son lo mismo; en spread,
+    la tabla tiene una fila por objeto y período. ``csv`` son las columnas y filas de
+    «Exportar a CSV» (spread en formato largo); ``None`` si no se puede exportar a CSV.
+    ``unidades`` nombra los elementos de ``respuesta`` (filas u objetos).
     """
 
     tabla: Sequence[Fila]
     columnas: Sequence[str]
     respuesta: Sequence[Fila]
     encabezado: str
+    perfil: str
+    endpoint: str
+    csv: tuple[Sequence[str], Sequence[Fila]] | None
+    unidades: tuple[str, str] = (messages.UNIDAD_FILA, messages.UNIDAD_FILAS)
 
 
 def _consultar_entity(
@@ -359,7 +377,15 @@ def _consultar_entity(
             continue
         segundos = time.perf_counter() - inicio
         encabezado = render.encabezado_resultados(endpoint.key, len(filas), segundos)
-        resultado = Resultado(filas, consulta.campos, filas, encabezado)
+        resultado = Resultado(
+            filas,
+            consulta.campos,
+            filas,
+            encabezado,
+            perfil.name,
+            endpoint.key,
+            csv=(consulta.campos, filas),
+        )
         _mostrar_tabla(resultado)
         siguiente = _siguiente_paso(prompter, resultado)
         if siguiente is not Accion.NUEVA_CONSULTA:
@@ -386,16 +412,27 @@ def _consultar_spread(
             continue
         segundos = time.perf_counter() - inicio
         tabla = filas_por_periodo(respuesta, endpoint, consulta.campos)
+        columnas: list[str] = []
+        filas: list[Fila] = []
         if tabla is None:
             encabezado = render.encabezado_resultados(endpoint.key, len(respuesta), segundos)
-            resultado = Resultado([], [], respuesta, encabezado)
             render.aviso_sin_tabla(encabezado, messages.AVISO_SPREAD_SIN_TABLA_MENU)
         else:
             columnas, filas = tabla
             encabezado = render.encabezado_spread(
                 endpoint.key, len(respuesta), len(filas), segundos
             )
-            resultado = Resultado(filas, columnas, respuesta, encabezado)
+        resultado = Resultado(
+            filas,
+            columnas,
+            respuesta,
+            encabezado,
+            perfil.name,
+            endpoint.key,
+            csv=filas_spread_largo(respuesta, endpoint, consulta.campos),
+            unidades=(messages.UNIDAD_OBJETO, messages.UNIDAD_OBJETOS),
+        )
+        if tabla is not None:
             _mostrar_tabla(resultado)
         siguiente = _siguiente_paso(prompter, resultado)
         if siguiente is not Accion.NUEVA_CONSULTA:
@@ -414,12 +451,15 @@ def _mostrar_tabla(resultado: Resultado) -> None:
 
 
 def _siguiente_paso(prompter: Prompter, resultado: Resultado) -> Accion:
-    """«¿Qué sigue?» (§10.7). Ver la salida completa usa lo ya recibido y vuelve aquí."""
-    while (
-        siguiente := prompter.select(messages.PREGUNTA_SIGUIENTE, _opciones_siguiente(resultado))
-    ) in (Accion.VER_TABLA, Accion.VER_JSON):
-        _ver_completo(prompter, siguiente, resultado)
-    return siguiente
+    """«¿Qué sigue?» (§10.7). Ver o exportar usa lo ya recibido y vuelve aquí."""
+    while True:
+        siguiente = prompter.select(messages.PREGUNTA_SIGUIENTE, _opciones_siguiente(resultado))
+        if siguiente in (Accion.VER_TABLA, Accion.VER_JSON):
+            _ver_completo(prompter, siguiente, resultado)
+        elif siguiente in (Accion.EXPORTAR_CSV, Accion.EXPORTAR_JSON):
+            _exportar(prompter, siguiente, resultado)
+        else:
+            return siguiente
 
 
 def _opciones_siguiente(resultado: Resultado) -> tuple[Opcion[Accion], ...]:
@@ -430,15 +470,12 @@ def _opciones_siguiente(resultado: Resultado) -> tuple[Opcion[Accion], ...]:
         opciones.append(Opcion(titulo, Accion.VER_TABLA))
     if resultado.respuesta:
         opciones.append(Opcion(messages.OPCION_VER_JSON, Accion.VER_JSON))
+    # Un spread que no se pudo aplanar solo se exporta tal cual, en JSON.
+    sin_csv = messages.SPREAD_SIN_CSV if resultado.csv is None else None
     return (
         *opciones,
-        # La exportación llega en M7.
-        Opcion(
-            messages.OPCION_EXPORTAR_CSV, Accion.EXPORTAR_CSV, deshabilitada=messages.PROXIMAMENTE
-        ),
-        Opcion(
-            messages.OPCION_EXPORTAR_JSON, Accion.EXPORTAR_JSON, deshabilitada=messages.PROXIMAMENTE
-        ),
+        Opcion(messages.OPCION_EXPORTAR_CSV, Accion.EXPORTAR_CSV, deshabilitada=sin_csv),
+        Opcion(messages.OPCION_EXPORTAR_JSON, Accion.EXPORTAR_JSON),
         Opcion(messages.OPCION_NUEVA_CONSULTA, Accion.NUEVA_CONSULTA),
         Opcion(messages.OPCION_OTRO_ENDPOINT, Accion.OTRO_ENDPOINT),
         Opcion(messages.OPCION_CAMBIAR_AMBIENTE, Accion.CAMBIAR_AMBIENTE),
@@ -457,3 +494,47 @@ def _ver_completo(prompter: Prompter, accion: Accion, resultado: Resultado) -> N
         render.tabla_resultados(filas, resultado.columnas, 0, resultado.encabezado)
     else:
         render.json_resultados(filas)
+
+
+def _exportar(prompter: Prompter, accion: Accion, resultado: Resultado) -> None:
+    """Confirma la ruta completa y exporta lo recibido, sin consultar a P6.
+
+    Propone <directorio de trabajo>/exports/<nombre>: «De acuerdo» la acepta y «Cambiar
+    ruta» pide otra carpeta (ruta completa); el nombre del archivo siempre lo pone el
+    programa. Nunca sobrescribe: si el archivo existe se agrega un sufijo y se informa la
+    ruta real. Un error (permisos) se muestra y se vuelve a «¿Qué sigue?».
+    """
+    formato = Formato.CSV if accion is Accion.EXPORTAR_CSV else Formato.JSON
+    nombre = nombre_archivo(resultado.perfil, resultado.endpoint, formato, datetime.now())
+    carpeta = Path.cwd() / CARPETA_EXPORTACION
+    opciones = (
+        Opcion(messages.OPCION_DE_ACUERDO, Accion.DE_ACUERDO),
+        Opcion(messages.OPCION_CAMBIAR_RUTA, Accion.CAMBIAR_RUTA),
+    )
+    while (
+        prompter.select(messages.PREGUNTA_RUTA_EXPORTAR.format(ruta=carpeta / nombre), opciones)
+        is Accion.CAMBIAR_RUTA
+    ):
+        carpeta = _pedir_carpeta(prompter, carpeta)
+    ruta = carpeta / nombre
+    try:
+        if formato is Formato.JSON:
+            escrita = escribir_json(ruta, resultado.respuesta)
+            render.exportado(escrita, len(resultado.respuesta), *resultado.unidades)
+            return
+        assert resultado.csv is not None
+        columnas, filas = resultado.csv
+        escrita = escribir_csv(ruta, filas, columnas)
+        render.exportado(escrita, len(filas))
+    except P6CliError as error:
+        render.mostrar_error(error)
+
+
+def _pedir_carpeta(prompter: Prompter, actual: Path) -> Path:
+    """Pide la carpeta destino con la actual ya escrita; exige una ruta completa."""
+    while True:
+        texto = forms.pedir_texto(prompter, messages.ETIQUETA_CARPETA_EXPORTAR, str(actual))
+        carpeta = Path(texto).expanduser()
+        if carpeta.is_absolute():
+            return carpeta
+        typer.echo(messages.CARPETA_NO_COMPLETA, err=True)

@@ -224,6 +224,34 @@ AYUDA_OPCION_MAX_ROWS = (
 )
 AYUDA_OPCION_JSON = "Imprime la respuesta completa como JSON, sin tabla."
 
+# --- Exportación (§13) -------------------------------------------------------------
+
+AYUDA_OPCION_OUTPUT = (
+    "Guarda el resultado completo en un archivo en lugar de mostrarlo; la extensión (.csv o "
+    ".json) define el formato. Nunca sobrescribe: si el archivo existe, agrega un sufijo."
+)
+AYUDA_OPCION_OUTPUT_SPREAD = (
+    "Guarda el resultado en un archivo en lugar de mostrarlo: .csv en formato largo (una fila "
+    "por objeto, período y campo) o .json con la respuesta de P6 tal cual. Nunca sobrescribe: "
+    "si el archivo existe, agrega un sufijo."
+)
+# Menú: la ruta completa se confirma o se cambia la carpeta; el nombre lo pone el programa.
+PREGUNTA_RUTA_EXPORTAR = "¿Guardar el archivo en {ruta}?"
+OPCION_DE_ACUERDO = "De acuerdo"
+OPCION_CAMBIAR_RUTA = "Cambiar ruta"
+ETIQUETA_CARPETA_EXPORTAR = "Carpeta (ruta completa) :"
+CARPETA_NO_COMPLETA = (
+    "Escribe la ruta completa de la carpeta, p. ej. C:\\exportaciones. El nombre del archivo "
+    "lo pone el programa."
+)
+EXPORTADO = "Exportado a {ruta} ({cantidad} {unidad})."
+# Motivo de «Exportar a CSV» deshabilitado en un spread que no se pudo aplanar.
+SPREAD_SIN_CSV = "la respuesta no tiene la forma esperada"
+AVISO_SPREAD_SIN_CSV = (
+    "La respuesta no tiene la forma esperada (objetos con un arreglo Period): no se puede "
+    "exportar a CSV. Usa un archivo .json para guardarla tal cual."
+)
+
 # --- Lecturas por lotes y spread (§9, §11.2, §12) -----------------------------------
 
 AYUDA_GET_ALL = (
@@ -499,8 +527,6 @@ AVISO_CLAVE_PRUEBA_MENU = (
 
 PREGUNTA_ENDPOINT = "¿Qué quieres consultar?"
 OPCION_CAMBIAR_AMBIENTE = "Cambiar ambiente"
-# Opciones que se implementan en hitos posteriores (exportación en M7).
-PROXIMAMENTE = "próximamente"
 
 # --- Formulario entity (§11.1) y confirmación (§11.3) -------------------------------
 
@@ -669,6 +695,12 @@ ERRORES: dict[StrEnum, str] = {
     MotivoUso.ARCHIVO_IDS_EXTENSION: "El archivo «{ruta}» debe ser {extensiones}.",
     MotivoUso.ARCHIVO_IDS_ILEGIBLE: "No se pudo leer el archivo «{ruta}» ({tipo}).",
     MotivoUso.ARCHIVO_IDS_SIN_COLUMNA: "El archivo «{ruta}» no tiene una columna {columna}.",
+    MotivoUso.EXTENSION_SALIDA: "El archivo «{ruta}» debe terminar en {extensiones}.",
+    MotivoUso.ARCHIVO_SALIDA_NO_ESCRIBIBLE: "No se pudo escribir el archivo «{ruta}» ({tipo}).",
+    MotivoUso.JSON_CON_OUTPUT: (
+        "Usa --json o --output, no los dos: --json imprime en la terminal y --output guarda en "
+        "un archivo."
+    ),
     MotivoGuardarrail.SIN_FILTRO: (
         "Sin filtro se traerán todos los registros de «{endpoint}» de la instancia. Agrega "
         "--filter o, si de verdad lo necesitas, --allow-unfiltered."
