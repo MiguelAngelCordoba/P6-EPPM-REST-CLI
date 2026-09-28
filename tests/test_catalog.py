@@ -190,3 +190,80 @@ def test_es_campo_valido(nombre: str, valido: bool) -> None:
 
 def test_normalizar_acepta_guion_bajo_y_digitos() -> None:
     assert catalog.normalizar_campos("Udf_1,Campo2") == ("Udf_1", "Campo2")
+
+
+# --- Spread: parámetro de IDs y entidad base ------------------------------------
+
+
+def test_param_ids_de_un_spread() -> None:
+    spec = catalog.param_ids(catalog.obtener("spread.activity"))
+
+    assert spec.name == "ActivityObjectId"
+    assert spec.kind is ParamKind.ID_LIST
+
+
+def test_param_ids_de_un_entity_no_es_spread() -> None:
+    with pytest.raises(UsageError) as capturado:
+        catalog.param_ids(catalog.obtener("activity"))
+
+    assert capturado.value.motivo is MotivoUso.NO_ES_SPREAD
+    assert capturado.value.datos["endpoint"] == "activity"
+
+
+@pytest.mark.parametrize(
+    ("spread", "entidad"),
+    [("spread.activity", "activity"), ("spread.resourceAssignment", "resourceAssignment")],
+)
+def test_entidad_base_de_cada_spread(spread: str, entidad: str) -> None:
+    base = catalog.entidad_base(catalog.obtener(spread))
+
+    assert base.key == entidad
+    assert base.template is Plantilla.ENTITY
+
+
+# --- normalizar_ids (§11.2) --------------------------------------------------------
+
+
+def test_normalizar_ids_quita_espacios_vacios_y_duplicados_en_orden() -> None:
+    assert catalog.normalizar_ids(" 4845, 4835,,4845 , 007") == (4845, 4835, 7)
+
+
+@pytest.mark.parametrize("texto", ["", "  ", " , ,"])
+def test_normalizar_ids_vacio(texto: str) -> None:
+    with pytest.raises(UsageError) as capturado:
+        catalog.normalizar_ids(texto)
+
+    assert capturado.value.motivo is MotivoUso.IDS_VACIOS
+
+
+@pytest.mark.parametrize("valor", ["abc", "-1", "0", "1.5", "+3", "1 2", "٣"])
+def test_normalizar_ids_invalido(valor: str) -> None:
+    with pytest.raises(UsageError) as capturado:
+        catalog.normalizar_ids(f"4835,{valor}")
+
+    assert capturado.value.motivo is MotivoUso.ID_INVALIDO
+    assert capturado.value.datos["valor"] == valor
+
+
+# --- SpreadField válidos (ayuda con ?) ---------------------------------------------
+
+
+def test_campos_spread_de_cada_endpoint() -> None:
+    actividad = catalog.campos_spread(catalog.obtener("spread.activity"))
+    asignacion = catalog.campos_spread(catalog.obtener("spread.resourceAssignment"))
+
+    assert len(actividad) == len(set(actividad)) == 72
+    assert len(asignacion) == len(set(asignacion)) == 26
+    assert (actividad[0], actividad[-1]) == ("ActualCost", "RemainingTotalCost")
+    assert (asignacion[0], asignacion[-1]) == ("ActualCost", "PeriodAtCompletionUnits")
+    assert "PlannedLaborUnits" in actividad
+    assert "PlannedLaborUnits" not in asignacion
+    assert "PlannedUnits" in asignacion
+    assert all(catalog.es_campo_valido(campo) for campo in actividad + asignacion)
+
+
+def test_campos_spread_de_un_entity_no_es_spread() -> None:
+    with pytest.raises(UsageError) as capturado:
+        catalog.campos_spread(catalog.obtener("activity"))
+
+    assert capturado.value.motivo is MotivoUso.NO_ES_SPREAD

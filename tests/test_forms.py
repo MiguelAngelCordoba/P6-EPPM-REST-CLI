@@ -1,7 +1,9 @@
 """Formulario ``entity`` (§11.1, §11.3) y asistente de perfil (§10.3) con un Prompter guionizado."""
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 import responses
@@ -10,19 +12,24 @@ from p6cli.cli import forms, messages
 from p6cli.cli.forms import (
     Confirmacion,
     ConsultaEntity,
+    ConsultaSpread,
     Decision,
     ModoTLS,
+    OrigenIds,
     ValoresEntity,
+    ValoresSpread,
     comando_equivalente,
+    comando_equivalente_spread,
     formulario_entity,
+    formulario_spread,
 )
 from p6cli.core import catalog, secrets
 from p6cli.core.catalog import FIELDS, FILTER, ORDER_BY
-from p6cli.core.client import Cliente, validar_consulta
+from p6cli.core.client import Cliente, validar_consulta, validar_spread
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import Sesion
-from tests.conftest import LOGIN_RECHAZADO, Simulada, llamadas, registrar_p6
-from tests.guion import PrompterGuion, confirmar, elegir, escribir, oculta
+from tests.conftest import BASE, LOGIN_RECHAZADO, Simulada, llamadas, registrar_p6
+from tests.guion import Pregunta, PrompterGuion, confirmar, elegir, escribir, oculta
 
 CLAVE = "ClaveDePrueba1"
 PERFIL = Profile.desde_toml(
@@ -416,3 +423,360 @@ def test_asistente_fallo_guardar_de_todas_formas(http_simulado: responses.Reques
     assert perfil is not None
     assert perfil.verify_ssl is False
     assert secrets.leer_clave("demo") == CLAVE
+
+
+# --- Formulario spread (§11.2 y §11.3) ----------------------------------------------
+
+SPREAD = catalog.obtener("spread.activity")
+FILTRO_IDS = "ProjectObjectId:eq:1234"
+
+
+def escritos(ids: str = "4835,4845") -> list[tuple[str, object]]:
+    return [elegir(OrigenIds.ESCRIBIR), escribir(ids)]
+
+
+def resto(
+    spread_field: str = "PlannedLaborUnits",
+    periodo: str = "Week",
+    inicio: str = "",
+    fin: str = "",
+    acumulado: bool = True,
+) -> list[tuple[str, object]]:
+    """SpreadField, PeriodType, fechas e IncludeCumulative, en el orden del formulario."""
+    return [
+        escribir(spread_field),
+        elegir(periodo),
+        escribir(inicio),
+        escribir(fin),
+        confirmar(acumulado),
+    ]
+
+
+def formulario_s(
+    guion: PrompterGuion, cliente: Cliente, valores: ValoresSpread | None = None
+) -> ConsultaSpread | None:
+    consulta = formulario_spread(guion, cliente, PERFIL, SPREAD, valores or ValoresSpread())
+    assert guion.terminado, f"Quedaron respuestas sin usar: {guion.respuestas}"
+    return consulta
+
+
+def preguntas(guion: PrompterGuion, mensaje: str) -> list[Pregunta]:
+    return [p for p in guion.preguntas if p.mensaje == mensaje]
+
+
+def ids_de_actividades(*ids: int) -> Simulada:
+    cuerpo = json.dumps([{"ObjectId": numero} for numero in ids])
+    return Simulada(200, cuerpo=cuerpo, content_type="application/json")
+
+
+def test_spread_ids_escritos_sin_tocar_p6(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guion = PrompterGuion(*escritos(" 4835, 4845,4835"), *resto(), EJECUTAR)
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert consulta.ids == (4835, 4845)
+    assert consulta.params()["ActivityObjectId"] == "4835,4845"
+    assert consulta.campos == ["PlannedLaborUnits"]
+    assert len(consulta.lotes) == 1
+    assert len(http_simulado.calls) == 0
+    salida = capsys.readouterr().out
+    assert "GET /spread/activitySpread — Spread por actividad" in salida
+    assert all(linea in salida for linea in messages.AYUDA_FORMULARIO_SPREAD)
+    assert "2 ObjectId en 1 lote" in salida
+
+
+def test_spread_opciones_y_valores_por_defecto(cliente: Cliente) -> None:
+    guion = PrompterGuion(*escritos(), *resto(), EJECUTAR)
+
+    formulario_s(guion, cliente)
+
+    origen = preguntas(guion, messages.PREGUNTA_ORIGEN_IDS)[0]
+    assert origen.por_defecto is OrigenIds.ESCRIBIR
+    assert origen.titulos()[-1] == "Desde una consulta a «activity»"
+    periodo = preguntas(guion, messages.PREGUNTA_PERIODO)[0]
+    assert periodo.por_defecto == "Week"
+    assert periodo.elegibles() == list(catalog.PERIODOS)
+    assert guion.de_tipo("confirm")[0].por_defecto is True
+    # Sin valores preseleccionados en los textos.
+    assert por_defecto_de_textos(guion) == ["", "", "", ""]
+
+
+def test_spread_ids_desde_un_archivo(
+    cliente: Cliente, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archivo = tmp_path / "actividades.json"
+    archivo.write_text('[{"ObjectId": 4845}, {"ObjectId": 4835}]', encoding="utf-8")
+    guion = PrompterGuion(elegir(OrigenIds.ARCHIVO), escribir(str(archivo)), *resto(), EJECUTAR)
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert consulta.ids == (4845, 4835)
+    assert f"Se leyeron 2 ObjectId de {archivo}." in capsys.readouterr().out
+
+
+def test_spread_archivo_invalido_vuelve_a_elegir_origen(
+    cliente: Cliente, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    faltante = str(tmp_path / "no_existe.csv")
+    guion = PrompterGuion(
+        elegir(OrigenIds.ARCHIVO), escribir(faltante), *escritos(), *resto(), EJECUTAR
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert "No se pudo leer el archivo" in capsys.readouterr().err
+    origenes = preguntas(guion, messages.PREGUNTA_ORIGEN_IDS)
+    assert [p.por_defecto for p in origenes] == [OrigenIds.ESCRIBIR, OrigenIds.ARCHIVO]
+
+
+def test_spread_ids_desde_una_consulta(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    http_simulado.add(ids_de_actividades(4845, 4835).respuesta("GET", f"{BASE}/activity"))
+    guion = PrompterGuion(elegir(OrigenIds.CONSULTA), escribir(FILTRO_IDS), *resto(), EJECUTAR)
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert consulta.ids == (4835, 4845)
+    peticion = next(c.request for c in http_simulado.calls if c.request.method == "GET")
+    enviada = dict(parse_qsl(urlsplit(str(peticion.url)).query))
+    assert enviada["Fields"] == "ObjectId"
+    assert enviada["Filter"] == FILTRO_IDS
+    assert guion.de_tipo("text")[0].mensaje == "(Obligatorio) Filter sobre activity :"
+    assert "Se obtuvieron 2 ObjectId de «activity»." in capsys.readouterr().out
+    assert consulta.valores.filtro == FILTRO_IDS
+
+
+def test_spread_consulta_sin_resultados_vuelve_a_elegir_origen(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    http_simulado.add(ids_de_actividades().respuesta("GET", f"{BASE}/activity"))
+    guion = PrompterGuion(
+        elegir(OrigenIds.CONSULTA), escribir(FILTRO_IDS), *escritos(), *resto(), EJECUTAR
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert "Ningún registro de «activity» cumple ese filtro." in capsys.readouterr().err
+
+
+def test_spread_consulta_con_filtro_vacio_no_toca_p6(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guion = PrompterGuion(
+        elegir(OrigenIds.CONSULTA), escribir("  "), *escritos(), *resto(), EJECUTAR
+    )
+
+    formulario_s(guion, cliente)
+
+    assert messages.FILTRO_IDS_VACIO in capsys.readouterr().err
+    assert len(http_simulado.calls) == 0
+
+
+def test_spread_interrogacion_en_el_filtro_muestra_la_guia(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    http_simulado.add(ids_de_actividades(4835).respuesta("GET", f"{BASE}/activity"))
+    guion = PrompterGuion(
+        elegir(OrigenIds.CONSULTA), escribir("?"), escribir(FILTRO_IDS), *resto(), EJECUTAR
+    )
+
+    formulario_s(guion, cliente)
+
+    salida = capsys.readouterr().out
+    assert messages.GUIAS_SINTAXIS["filter"].titulo in salida
+    assert messages.AVISO_SINTAXIS_FORMULARIO in salida
+
+
+def test_spread_consulta_con_error_de_p6_vuelve_a_elegir_origen(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error = Simulada(400, cuerpo='{"message":"Bad filter"}', content_type="application/json")
+    http_simulado.add(error.respuesta("GET", f"{BASE}/activity"))
+    guion = PrompterGuion(
+        elegir(OrigenIds.CONSULTA), escribir("Mal"), *escritos(), *resto(), EJECUTAR
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert "Bad filter" in capsys.readouterr().err
+
+
+def test_spread_mismo_filtro_no_repite_la_consulta_de_ids(
+    cliente: Cliente, http_simulado: responses.RequestsMock
+) -> None:
+    http_simulado.add(ids_de_actividades(4835).respuesta("GET", f"{BASE}/activity"))
+    guion = PrompterGuion(
+        elegir(OrigenIds.CONSULTA),
+        escribir(FILTRO_IDS),
+        *resto(inicio="2026-02-30"),
+        # El formulario reaparece: mismo origen y mismo filtro.
+        elegir(OrigenIds.CONSULTA),
+        escribir(FILTRO_IDS),
+        *resto(),
+        EJECUTAR,
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert llamadas(http_simulado, "GET", "/activity") == 1
+
+
+def test_spread_field_vacio_reaparece_con_lo_escrito(
+    cliente: Cliente, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guion = PrompterGuion(
+        *escritos(),
+        *resto(spread_field=" ", inicio="2026-01-05"),
+        *escritos(),
+        *resto(inicio="2026-01-05"),
+        EJECUTAR,
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert "Se necesita al menos un campo en SpreadField." in capsys.readouterr().err
+    assert por_defecto_de_textos(guion)[4:] == ["4835,4845", " ", "2026-01-05", ""]
+
+
+def test_spread_fecha_invalida_reaparece_con_lo_escrito(
+    cliente: Cliente, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guion = PrompterGuion(
+        *escritos(),
+        *resto(periodo="Month", inicio="05/01/2026", acumulado=False),
+        *escritos(),
+        *resto(periodo="Month", inicio="2026-01-05", acumulado=False),
+        EJECUTAR,
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert "Fecha «05/01/2026» no válida en StartDate" in capsys.readouterr().err
+    segundo_periodo = preguntas(guion, messages.PREGUNTA_PERIODO)[1]
+    assert segundo_periodo.por_defecto == "Month"
+    assert guion.de_tipo("confirm")[1].por_defecto is False
+    assert consulta.lotes[0]["StartDate"] == "2026-01-05T00:00:00"
+
+
+def test_spread_editar_reabre_con_lo_escrito(cliente: Cliente) -> None:
+    guion = PrompterGuion(
+        *escritos(),
+        *resto(),
+        elegir(Confirmacion.EDITAR),
+        *escritos("4835"),
+        *resto(),
+        EJECUTAR,
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert consulta.ids == (4835,)
+    assert por_defecto_de_textos(guion)[4] == "4835,4845"
+
+
+def test_spread_cancelar(cliente: Cliente, http_simulado: responses.RequestsMock) -> None:
+    guion = PrompterGuion(*escritos(), *resto(), elegir(Confirmacion.CANCELAR))
+
+    assert formulario_s(guion, cliente) is None
+    assert len(http_simulado.calls) == 0
+
+
+def consulta_spread(valores: ValoresSpread, ids: tuple[int, ...]) -> ConsultaSpread:
+    params = {
+        "ActivityObjectId": ",".join(map(str, ids)),
+        "SpreadField": valores.spread_field,
+        "PeriodType": valores.periodo,
+        "StartDate": valores.inicio,
+        "EndDate": valores.fin,
+        "IncludeCumulative": "true" if valores.acumulado else "false",
+    }
+    return ConsultaSpread(SPREAD, valores, ids, validar_spread(PERFIL, SPREAD, params))
+
+
+@pytest.mark.parametrize(
+    ("valores", "comando"),
+    [
+        (
+            ValoresSpread(spread_field="PlannedLaborUnits"),
+            'p6 spread spread.activity --env demo --ids "4835,4845" '
+            '--spread-fields "PlannedLaborUnits"',
+        ),
+        (
+            ValoresSpread(origen=OrigenIds.CONSULTA, filtro=FILTRO_IDS, spread_field="A, B,A"),
+            'p6 spread spread.activity --env demo --ids "4835,4845" --spread-fields "A,B"',
+        ),
+        (
+            ValoresSpread(
+                origen=OrigenIds.ARCHIVO,
+                archivo="exports/ids.csv",
+                spread_field="A",
+                periodo="Month",
+                inicio=" 2026-01-01 ",
+                fin="2026-01-31",
+                acumulado=False,
+            ),
+            'p6 spread spread.activity --env demo --ids-from "exports/ids.csv" '
+            '--spread-fields "A" --period Month --start 2026-01-01 --end 2026-01-31 '
+            "--no-cumulative",
+        ),
+    ],
+    ids=["escritos", "consulta", "archivo-con-flags"],
+)
+def test_comando_equivalente_spread(valores: ValoresSpread, comando: str) -> None:
+    assert comando_equivalente_spread("demo", consulta_spread(valores, (4835, 4845))) == comando
+
+
+def test_spread_interrogacion_en_spread_field_lista_los_validos_sin_red(
+    cliente: Cliente, http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    guion = PrompterGuion(
+        *escritos(), escribir(" ? "), *resto(spread_field="PlannedLaborUnits"), EJECUTAR
+    )
+
+    consulta = formulario_s(guion, cliente)
+
+    assert consulta is not None
+    assert consulta.campos == ["PlannedLaborUnits"]
+    salida = capsys.readouterr().out
+    assert "SpreadField válidos de spread.activity (72)" in salida
+    assert all(campo in salida for campo in catalog.CAMPOS_SPREAD_ACTIVIDAD)
+    assert len(http_simulado.calls) == 0
+    etiquetas = [p.mensaje for p in guion.de_tipo("text")]
+    assert etiquetas[1:3] == [messages.ETIQUETA_SPREAD_FIELD] * 2
+
+
+def test_spread_interrogacion_conserva_lo_escrito_en_spread_field(cliente: Cliente) -> None:
+    guion = PrompterGuion(*escritos(), escribir("?"), *resto(spread_field="ActualCost"), EJECUTAR)
+
+    formulario_s(guion, cliente, ValoresSpread(spread_field="ActualCost"))
+
+    assert por_defecto_de_textos(guion)[1:3] == ["ActualCost", "ActualCost"]
+
+
+def test_spread_interrogacion_en_asignaciones_lista_sus_campos(
+    cliente: Cliente, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asignaciones = catalog.obtener("spread.resourceAssignment")
+    guion = PrompterGuion(*escritos(), escribir("?"), *resto(spread_field="PlannedUnits"), EJECUTAR)
+
+    consulta = formulario_spread(guion, cliente, PERFIL, asignaciones, ValoresSpread())
+
+    assert consulta is not None
+    assert guion.terminado
+    salida = capsys.readouterr().out
+    assert "SpreadField válidos de spread.resourceAssignment (26)" in salida
+    assert "StaffedRemainingUnits" in salida
+    assert "Baseline1PlannedTotalCost" not in salida

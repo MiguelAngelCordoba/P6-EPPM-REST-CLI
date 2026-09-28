@@ -13,8 +13,11 @@ from p6cli.core.client import (
     LARGO_MAXIMO_URL,
     ORDEN_NEUTRO,
     Cliente,
+    filas_por_periodo,
     preparar_consulta,
     validar_consulta,
+    validar_lectura_masiva,
+    validar_spread,
 )
 from p6cli.core.diagnostics import EstadoDiagnostico
 from p6cli.core.errors import (
@@ -417,3 +420,480 @@ def test_ningun_error_contiene_la_clave_ni_el_token(
     texto = str(capturado.value) + repr(capturado.value.datos)
     assert CLAVE not in texto
     assert token_autenticacion("admin", CLAVE) not in texto
+
+
+# --- preparar_consulta de spread: tipos de parámetro --------------------------------
+
+SPREAD_MINIMO = {"ActivityObjectId": "4835", "SpreadField": "PlannedLaborUnits"}
+
+
+@pytest.mark.parametrize(("escrito", "enviado"), [("WEEK", "Week"), (" month ", "Month")])
+def test_period_type_sin_distinguir_mayusculas_se_envia_canonico(
+    escrito: str, enviado: str
+) -> None:
+    consulta = preparar_consulta(SPREAD, {**SPREAD_MINIMO, "PeriodType": escrito})
+
+    assert consulta["PeriodType"] == enviado
+
+
+def test_period_type_fuera_de_las_opciones() -> None:
+    with pytest.raises(UsageError) as capturado:
+        preparar_consulta(SPREAD, {**SPREAD_MINIMO, "PeriodType": "Weekly"})
+
+    assert capturado.value.motivo is MotivoUso.VALOR_NO_PERMITIDO
+    assert capturado.value.datos["parametro"] == "PeriodType"
+    assert "FinancialPeriod" in capturado.value.datos["opciones"]
+
+
+@pytest.mark.parametrize(("escrito", "enviado"), [("FALSE", "false"), ("true", "true")])
+def test_include_cumulative_se_envia_canonico(escrito: str, enviado: str) -> None:
+    consulta = preparar_consulta(SPREAD, {**SPREAD_MINIMO, "IncludeCumulative": escrito})
+
+    assert consulta["IncludeCumulative"] == enviado
+
+
+@pytest.mark.parametrize("valor", ["si", "1", "yes"])
+def test_include_cumulative_invalido(valor: str) -> None:
+    with pytest.raises(UsageError) as capturado:
+        preparar_consulta(SPREAD, {**SPREAD_MINIMO, "IncludeCumulative": valor})
+
+    assert capturado.value.motivo is MotivoUso.VALOR_NO_PERMITIDO
+
+
+def test_fechas_se_envian_con_hora_cero() -> None:
+    params = {**SPREAD_MINIMO, "StartDate": " 2026-01-05 ", "EndDate": "2026-01-05"}
+
+    consulta = preparar_consulta(SPREAD, params)
+
+    assert consulta["StartDate"] == "2026-01-05T00:00:00"
+    assert consulta["EndDate"] == "2026-01-05T00:00:00"
+
+
+@pytest.mark.parametrize(
+    "fecha", ["2026-02-30", "05/01/2026", "2026-1-5", "2026-01-05T00:00:00", "hoy"]
+)
+def test_fecha_invalida(fecha: str) -> None:
+    with pytest.raises(UsageError) as capturado:
+        preparar_consulta(SPREAD, {**SPREAD_MINIMO, "EndDate": fecha})
+
+    assert capturado.value.motivo is MotivoUso.FECHA_INVALIDA
+    assert capturado.value.datos == {"parametro": "EndDate", "valor": fecha}
+
+
+def test_inicio_posterior_al_fin() -> None:
+    params = {**SPREAD_MINIMO, "StartDate": "2026-02-01", "EndDate": "2026-01-31"}
+
+    with pytest.raises(UsageError) as capturado:
+        preparar_consulta(SPREAD, params)
+
+    assert capturado.value.motivo is MotivoUso.RANGO_FECHAS
+    assert capturado.value.datos == {"inicio": "2026-02-01", "fin": "2026-01-31"}
+
+
+def test_ids_de_spread_se_normalizan() -> None:
+    consulta = preparar_consulta(SPREAD, {**SPREAD_MINIMO, "ActivityObjectId": "4845, 4835,4845"})
+
+    assert consulta["ActivityObjectId"] == "4845,4835"
+
+
+def test_id_invalido_en_spread() -> None:
+    with pytest.raises(UsageError) as capturado:
+        preparar_consulta(SPREAD, {**SPREAD_MINIMO, "ActivityObjectId": "4835,abc"})
+
+    assert capturado.value.motivo is MotivoUso.ID_INVALIDO
+
+
+# --- get_all (§9) ------------------------------------------------------------------
+
+# Lotes de 2 IDs y pausa de 0,25 s: 5 IDs dan 3 lotes.
+PERFIL_LOTES = Profile.desde_toml(
+    "demo",
+    {
+        "host": "https://localhost:7001",
+        "database_name": "orcl",
+        "username": "admin",
+        "id_chunk_size": 2,
+        "throttle_seconds": 0.25,
+    },
+)
+PARAMS_LOTES = {"Fields": "ObjectId,Id", "Filter": FILTRO}
+
+
+class Registro:
+    """Pausas pedidas y avisos de progreso recibidos."""
+
+    def __init__(self) -> None:
+        self.pausas: list[float] = []
+        self.avisos: list[tuple[int, int]] = []
+
+    def dormir(self, segundos: float) -> None:
+        self.pausas.append(segundos)
+
+    def avisar(self, hechos: int, total: int) -> None:
+        self.avisos.append((hechos, total))
+
+
+def cliente_lotes(registro: Registro, perfil: Profile = PERFIL_LOTES) -> Cliente:
+    return Cliente(Sesion(perfil, CLAVE), dormir=registro.dormir)
+
+
+def consultas_get(simulado: responses.RequestsMock) -> list[dict[str, str]]:
+    return [
+        dict(parse_qsl(urlsplit(str(llamada.request.url)).query))
+        for llamada in simulado.calls
+        if llamada.request.method == "GET"
+    ]
+
+
+def registrar_lotes(simulado: responses.RequestsMock, ruta: str, *respuestas: Simulada) -> None:
+    """Login y, en orden, cada respuesta del GET a ``ruta``."""
+    simulado.add(LOGIN_OK.respuesta("POST", f"{BASE}/login"))
+    for respuesta in respuestas:
+        simulado.add(respuesta.respuesta("GET", f"{BASE}{ruta}"))
+
+
+def ids_simulados(*ids: object) -> Simulada:
+    return json_simulado([{"ObjectId": numero} for numero in ids])
+
+
+def lote(*ids: int) -> Simulada:
+    return json_simulado([{"ObjectId": numero, "Id": f"A{numero}"} for numero in ids])
+
+
+def test_get_all_sondea_ids_y_pide_lotes_por_rango(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    # Desordenados y con un repetido: se ordenan y se agrupan de a 2.
+    registrar_lotes(
+        http_simulado, "/activity", ids_simulados(5, 1, 3, 2, 4, 3), lote(1, 2), lote(3, 4), lote(5)
+    )
+
+    filas = cliente_lotes(Registro()).get_all(ACTIVITY, PARAMS_LOTES)
+
+    assert [fila["ObjectId"] for fila in filas] == [1, 2, 3, 4, 5]
+    sondeo, *lotes = consultas_get(http_simulado)
+    assert sondeo == {
+        "Fields": "ObjectId",
+        "Filter": FILTRO,
+        "OrderBy": ORDEN_NEUTRO,
+        "DatabaseName": "orcl",
+    }
+    assert [consulta["Filter"] for consulta in lotes] == [
+        f"{FILTRO} :and: ObjectId:gte:1 :and: ObjectId:lte:2",
+        f"{FILTRO} :and: ObjectId:gte:3 :and: ObjectId:lte:4",
+        f"{FILTRO} :and: ObjectId:gte:5 :and: ObjectId:lte:5",
+    ]
+    assert all(consulta["Fields"] == "ObjectId,Id" for consulta in lotes)
+    assert all(consulta["OrderBy"] == ORDEN_NEUTRO for consulta in lotes)
+    assert llamadas(http_simulado, "POST", "/login") == 1
+
+
+def test_get_all_pausa_solo_entre_lotes_y_avisa_el_progreso(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(
+        http_simulado, "/activity", ids_simulados(1, 2, 3, 4, 5), lote(1, 2), lote(3, 4), lote(5)
+    )
+    registro = Registro()
+
+    cliente_lotes(registro).get_all(ACTIVITY, PARAMS_LOTES, on_progress=registro.avisar)
+
+    assert registro.pausas == [0.25, 0.25]
+    assert registro.avisos == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+
+def test_get_all_tamano_de_lote_reemplaza_al_del_perfil(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(http_simulado, "/activity", ids_simulados(1, 2, 3, 4, 5), lote(1, 2, 3, 4, 5))
+    registro = Registro()
+
+    filas = cliente_lotes(registro).get_all(ACTIVITY, PARAMS_LOTES, tamano_lote=10)
+
+    assert len(filas) == 5
+    assert len(consultas_get(http_simulado)) == 2
+    assert registro.pausas == []
+
+
+def test_get_all_sin_ids_no_pide_lotes(http_simulado: responses.RequestsMock) -> None:
+    registrar_lotes(http_simulado, "/activity", ids_simulados())
+    registro = Registro()
+
+    filas = cliente_lotes(registro).get_all(ACTIVITY, PARAMS_LOTES, on_progress=registro.avisar)
+
+    assert filas == []
+    assert len(consultas_get(http_simulado)) == 1
+    assert registro.avisos == [(0, 0)]
+
+
+@pytest.mark.parametrize(
+    "fila",
+    [{"Id": "A1"}, {"ObjectId": "abc"}, {"ObjectId": 0}, {"ObjectId": True}, "texto"],
+    ids=["sin-objectid", "texto", "cero", "booleano", "no-objeto"],
+)
+def test_get_all_sondeo_con_formato_inesperado(
+    http_simulado: responses.RequestsMock, fila: object
+) -> None:
+    registrar_lotes(http_simulado, "/activity", json_simulado([{"ObjectId": 1}, fila]))
+
+    with pytest.raises(P6HTTPError) as capturado:
+        cliente_lotes(Registro()).get_all(ACTIVITY, PARAMS_LOTES)
+
+    assert capturado.value.motivo is MotivoHTTP.FORMATO_INESPERADO
+    assert len(consultas_get(http_simulado)) == 1
+
+
+def test_sondeo_acepta_objectid_como_texto(http_simulado: responses.RequestsMock) -> None:
+    registrar_lotes(http_simulado, "/activity", ids_simulados("12", 3))
+
+    assert cliente_lotes(Registro()).ids(ACTIVITY, FILTRO) == [3, 12]
+
+
+def test_get_all_error_en_un_lote_se_propaga_y_no_sigue(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(
+        http_simulado,
+        "/activity",
+        ids_simulados(1, 2, 3, 4, 5),
+        lote(1, 2),
+        json_simulado({"message": "Request failed."}, 500),
+        lote(5),
+    )
+
+    with pytest.raises(P6HTTPError) as capturado:
+        cliente_lotes(Registro()).get_all(ACTIVITY, PARAMS_LOTES)
+
+    assert capturado.value.motivo is MotivoHTTP.CODIGO_HTTP
+    assert capturado.value.datos["codigo"] == "500"
+    assert len(consultas_get(http_simulado)) == 3
+
+
+@pytest.mark.parametrize("filtro", ["", "   "])
+def test_get_all_exige_filtro_aunque_el_endpoint_no_sea_grande(
+    http_simulado: responses.RequestsMock, filtro: str
+) -> None:
+    with pytest.raises(GuardrailError) as capturado:
+        cliente_lotes(Registro()).get_all(PROJECT, {"Fields": "ObjectId", "Filter": filtro})
+
+    assert capturado.value.motivo is MotivoGuardarrail.SIN_FILTRO_LOTES
+    assert capturado.value.datos["endpoint"] == "project"
+    assert len(http_simulado.calls) == 0
+
+
+@pytest.mark.parametrize("operador", [":or:", ":OR:", ":Or:"])
+def test_get_all_rechaza_or(http_simulado: responses.RequestsMock, operador: str) -> None:
+    filtro = f"ObjectId:eq:1 {operador} ObjectId:eq:2"
+
+    with pytest.raises(UsageError) as capturado:
+        cliente_lotes(Registro()).get_all(ACTIVITY, {"Fields": "ObjectId", "Filter": filtro})
+
+    assert capturado.value.motivo is MotivoUso.FILTRO_CON_OR
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_all_no_acepta_order_by(http_simulado: responses.RequestsMock) -> None:
+    with pytest.raises(UsageError) as capturado:
+        cliente_lotes(Registro()).get_all(ACTIVITY, {**PARAMS_LOTES, "OrderBy": "Name desc"})
+
+    assert capturado.value.motivo is MotivoUso.PARAMETRO_DESCONOCIDO
+    assert capturado.value.datos["parametro"] == "OrderBy"
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_all_de_spread_no_se_admite(http_simulado: responses.RequestsMock) -> None:
+    with pytest.raises(UsageError) as capturado:
+        cliente_lotes(Registro()).get_all(SPREAD, {"Filter": FILTRO})
+
+    assert capturado.value.motivo is MotivoUso.PLANTILLA_NO_SOPORTADA
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_all_mide_la_url_del_peor_lote_antes_del_login(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    # Cabe como consulta simple, pero no con el rango de ObjectId agregado.
+    params = _params_con_largo(LARGO_MAXIMO_URL - 20)
+    params["Fields"] = "ObjectId"
+    validar_consulta(PERFIL, ACTIVITY, params)
+
+    with pytest.raises(UsageError) as capturado:
+        validar_lectura_masiva(PERFIL, ACTIVITY, params)
+
+    assert capturado.value.motivo is MotivoUso.URL_DEMASIADO_LARGA
+    assert len(http_simulado.calls) == 0
+
+
+def test_sondeo_admite_or(http_simulado: responses.RequestsMock) -> None:
+    # Solo las lecturas por lotes agregan un rango: el sondeo envía el filtro tal cual.
+    registrar_lotes(http_simulado, "/activity", ids_simulados(1, 2))
+    filtro = "ObjectId:eq:1 :or: ObjectId:eq:2"
+
+    assert cliente_lotes(Registro()).ids(ACTIVITY, filtro) == [1, 2]
+    assert consultas_get(http_simulado)[0]["Filter"] == filtro
+
+
+# --- get_spread (§9) -----------------------------------------------------------------
+
+PARAMS_SPREAD = {
+    "ActivityObjectId": "1,2,3,4,5",
+    "SpreadField": "PlannedLaborUnits",
+    "PeriodType": "month",
+}
+
+
+def spread_de(*ids: int) -> Simulada:
+    return json_simulado([{"ActivityObjectId": numero, "Period": []} for numero in ids])
+
+
+def test_get_spread_trocea_los_ids_y_junta_las_respuestas(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(http_simulado, SPREAD.path, spread_de(1, 2), spread_de(3, 4), spread_de(5))
+
+    respuesta = cliente_lotes(Registro()).get_spread(SPREAD, PARAMS_SPREAD)
+
+    assert [objeto["ActivityObjectId"] for objeto in respuesta] == [1, 2, 3, 4, 5]
+    lotes = consultas_get(http_simulado)
+    assert [consulta["ActivityObjectId"] for consulta in lotes] == ["1,2", "3,4", "5"]
+    assert lotes[0] == {
+        "ActivityObjectId": "1,2",
+        "SpreadField": "PlannedLaborUnits",
+        "PeriodType": "Month",
+        "IncludeCumulative": "true",
+        "DatabaseName": "orcl",
+    }
+
+
+def test_get_spread_pausa_entre_lotes_y_avisa_el_progreso(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(http_simulado, SPREAD.path, spread_de(1, 2), spread_de(3, 4), spread_de(5))
+    registro = Registro()
+
+    cliente_lotes(registro).get_spread(SPREAD, PARAMS_SPREAD, on_progress=registro.avisar)
+
+    assert registro.pausas == [0.25, 0.25]
+    assert registro.avisos == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+
+def test_get_spread_tamano_de_lote_reemplaza_al_del_perfil(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    registrar_lotes(http_simulado, SPREAD.path, spread_de(1, 2, 3), spread_de(4, 5))
+
+    cliente_lotes(Registro()).get_spread(SPREAD, PARAMS_SPREAD, tamano_lote=3)
+
+    assert [c["ActivityObjectId"] for c in consultas_get(http_simulado)] == ["1,2,3", "4,5"]
+
+
+def test_get_spread_url_larga_se_detecta_antes_del_login(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    # 1.000 IDs de 7 dígitos en un solo lote: unos 8.000 caracteres.
+    ids = ",".join(str(1_000_000 + numero) for numero in range(1000))
+
+    with pytest.raises(UsageError) as capturado:
+        cliente_lotes(Registro()).get_spread(
+            SPREAD, {**PARAMS_SPREAD, "ActivityObjectId": ids}, tamano_lote=1000
+        )
+
+    assert capturado.value.motivo is MotivoUso.URL_DEMASIADO_LARGA
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_spread_con_lotes_chicos_la_url_cabe() -> None:
+    ids = ",".join(str(1_000_000 + numero) for numero in range(1000))
+
+    lotes = validar_spread(PERFIL, SPREAD, {**PARAMS_SPREAD, "ActivityObjectId": ids})
+
+    assert len(lotes) == 5
+    assert all(len(url_get(PERFIL, SPREAD.path, c)) <= LARGO_MAXIMO_URL for c in lotes)
+
+
+def test_get_spread_respuesta_que_no_es_lista(http_simulado: responses.RequestsMock) -> None:
+    registrar_lotes(http_simulado, SPREAD.path, json_simulado({"Period": []}))
+
+    with pytest.raises(P6HTTPError) as capturado:
+        cliente_lotes(Registro()).get_spread(SPREAD, {**PARAMS_SPREAD, "ActivityObjectId": "1"})
+
+    assert capturado.value.motivo is MotivoHTTP.FORMATO_INESPERADO
+
+
+def test_get_spread_de_un_entity_no_se_admite(http_simulado: responses.RequestsMock) -> None:
+    with pytest.raises(UsageError) as capturado:
+        cliente_lotes(Registro()).get_spread(ACTIVITY, PARAMS_SPREAD)
+
+    assert capturado.value.motivo is MotivoUso.NO_ES_SPREAD
+    assert len(http_simulado.calls) == 0
+
+
+# --- filas_por_periodo ---------------------------------------------------------------
+
+RESPUESTA_SPREAD = json.loads(leer_fixture("activity_spread_ok.json"))
+
+
+def test_filas_por_periodo_con_acumulados() -> None:
+    tabla = filas_por_periodo(RESPUESTA_SPREAD, SPREAD, ["PlannedLaborUnits"])
+
+    assert tabla is not None
+    columnas, filas = tabla
+    assert columnas == [
+        "ActivityObjectId",
+        "StartDate",
+        "EndDate",
+        "PlannedLaborUnits",
+        "CumulativePlannedLaborUnits",
+    ]
+    assert len(filas) == 3
+    assert filas[1] == {
+        "ActivityObjectId": 4835,
+        "StartDate": "2026-01-12T00:00:00",
+        "EndDate": "2026-01-18T23:59:59",
+        "PlannedLaborUnits": 32.0,
+        "CumulativePlannedLaborUnits": 72.0,
+    }
+    assert filas[2]["ActivityObjectId"] == 4845
+
+
+def test_filas_por_periodo_sin_acumulados_y_con_campo_ausente() -> None:
+    respuesta = [
+        {"ActivityObjectId": 1, "Period": [{"StartDate": "a", "EndDate": "b", "X": 1}]},
+        {"ActivityObjectId": 2},
+    ]
+
+    tabla = filas_por_periodo(respuesta, SPREAD, ["X", "Y"])
+
+    assert tabla == (
+        ["ActivityObjectId", "StartDate", "EndDate", "X", "Y"],
+        [{"ActivityObjectId": 1, "StartDate": "a", "EndDate": "b", "X": 1, "Y": None}],
+    )
+
+
+@pytest.mark.parametrize(
+    "respuesta",
+    [
+        [{"Id": "A1", "Period": []}],
+        [{"ActivityObjectId": 1, "Period": {"StartDate": "a"}}],
+        [{"ActivityObjectId": 1, "Period": ["a"]}],
+    ],
+    ids=["sin-objectid", "period-no-lista", "period-sin-objetos"],
+)
+def test_filas_por_periodo_forma_inesperada(respuesta: list[dict[str, object]]) -> None:
+    assert filas_por_periodo(respuesta, SPREAD, ["X"]) is None
+
+
+def test_sondeo_que_no_es_lista(http_simulado: responses.RequestsMock) -> None:
+    registrar_lotes(http_simulado, "/activity", json_simulado({"ObjectId": 1}))
+
+    with pytest.raises(P6HTTPError) as capturado:
+        cliente_lotes(Registro()).ids(ACTIVITY, FILTRO)
+
+    assert capturado.value.motivo is MotivoHTTP.FORMATO_INESPERADO
+
+
+def test_spread_field_fuera_de_la_lista_de_ayuda_se_envia_igual() -> None:
+    # La lista de SpreadField es ayuda con ?: quien valida es P6 (400 si no existe).
+    consulta = preparar_consulta(SPREAD, {**SPREAD_MINIMO, "SpreadField": "CampoNuevo"})
+
+    assert consulta["SpreadField"] == "CampoNuevo"

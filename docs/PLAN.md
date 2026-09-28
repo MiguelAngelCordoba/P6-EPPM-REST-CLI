@@ -18,7 +18,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M3 | Autenticación y diagnóstico | ✅ |
 | M4 | Catálogo, cliente y comandos básicos | ✅ |
 | M5 | Flujo interactivo | ✅ |
-| M6 | Lecturas masivas y spread | ⬜ |
+| M6 | Lecturas masivas y spread | ✅ |
 | M7 | Exportación | ⬜ |
 | M8 | Modo automatización | ⬜ |
 | M9 | Portafolio y release v1.0.0 | ⬜ |
@@ -197,13 +197,35 @@ Especificación: §10, §11.
 
 Especificación: §8.2 (`spread`), §9 (`get_all`, `get_spread`), §11.2.
 
-- [ ] `get_all` con sondeo de IDs, lotes por rango, rechazo de `:or:`, pausa y callback de progreso.
-- [ ] `get_spread` con troceo de IDs.
-- [ ] Formulario `spread` con los tres orígenes de ObjectId.
-- [ ] Comandos `p6 get-all` y `p6 spread`.
-- [ ] Barra de progreso en la interfaz.
+- [x] `get_all` con sondeo de IDs, lotes por rango, rechazo de `:or:`, pausa y callback de progreso.
+- [x] `get_spread` con troceo de IDs.
+- [x] Formulario `spread` con los tres orígenes de ObjectId.
+- [x] Comandos `p6 get-all` y `p6 spread`.
+- [x] Barra de progreso en la interfaz.
+
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- Spread en la terminal como tabla por período (objeto × período, con los `Cumulative<campo>` si vienen); JSON tal cual con «Ver el JSON completo» o `--json`.
+- `p6 get-all` y `p6 spread` llevan `--max-rows` y `--json`, como `p6 get`.
+- Sin `?` en SpreadField: la cabecera remite a la documentación de Oracle.
+- `get_all` exige Filter en cualquier endpoint (salida 3, sin `--allow-unfiltered`), no acepta OrderBy y rechaza `:or:` sin distinguir mayúsculas.
+- «Desde una consulta» usa solo el sondeo (una petición) y no lo repite si el filtro no cambió.
+- `PeriodType` e `IncludeCumulative` sin distinguir mayúsculas, enviados como en el catálogo (`Week`); fechas `AAAA-MM-DD` validadas y enviadas como `AAAA-MM-DDT00:00:00`.
+- `--ids-from` y el origen archivo aceptan CSV (`,` o `;`, con o sin BOM) y JSON con columna `ObjectId`.
+- `tests/fixtures/activity_spread_ok.json` es ilustrativo (schema de la documentación de Oracle con valores de muestra): se ajusta con la estructura real anonimizada.
 
 **Validación manual (tú):** un spread semanal sobre pocas actividades de un proyecto pequeño. Confirmar el formato de fecha aceptado y compartir con Claude una **estructura de ejemplo anonimizada** de la respuesta para el hito M7.
+
+- [x] `p6 spread spread.activity --ids <pocas> --spread-fields PlannedLaborUnits --start AAAA-MM-DD --end AAAA-MM-DD`: ¿P6 acepta `PeriodType=Week` o exige `WEEK`? ¿Acepta `AAAA-MM-DDT00:00:00`?
+- [x] La tabla por período coincide con la respuesta (`--json`); compartir su estructura anonimizada.
+- [x] `p6 get-all activity --fields ObjectId,Id --filter "ProjectObjectId:eq:<proyecto pequeño>" --chunk 20`: se ve la barra de progreso y llegan todas las filas.
+- [x] Menú: spread con los tres orígenes de ObjectId (escritos, archivo CSV exportado a mano, consulta).
+
+**Ajustes tras la validación manual** (detalle en `ESPECIFICACION.md` §18):
+
+- P6 aceptó `PeriodType=Week` y las fechas `AAAA-MM-DDT00:00:00`.
+- `?` en SpreadField lista los valores válidos del endpoint, sin red: 72 para `spread.activity` y 26 para `spread.resourceAssignment`, tomados de la documentación de Oracle 24.x. No se validan antes de enviar.
+- [x] Probar `?` en SpreadField en los dos endpoints spread.
 
 **Practica de Claude Code:** crear un subagente revisor en `.claude/agents/` que audite los cambios contra las reglas de `CLAUDE.md`.
 

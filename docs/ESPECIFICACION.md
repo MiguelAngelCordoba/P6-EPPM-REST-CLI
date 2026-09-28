@@ -248,13 +248,13 @@ En la rama 24.x la documentación de Oracle marca `Filter` y `OrderBy` como opci
 | Param | Tipo | Requerido | Por defecto |
 |---|---|---|---|
 | `<id param>` (ej. `ActivityObjectId`) | ID_LIST | sí | — |
-| `SpreadField` | FIELDS | sí | — |
+| `SpreadField` | FIELDS (valores válidos por endpoint en el catálogo, para `?`) | sí | — |
 | `PeriodType` | ENUM: Hour, Day, Week, Month, Quarter, Year, FinancialPeriod | sí | `Week` |
 | `StartDate` | DATE | no | — |
 | `EndDate` | DATE | no | — |
 | `IncludeCumulative` | BOOL | no | `true` |
 
-Formato de fecha enviado: `AAAA-MM-DDT00:00:00`. Se confirma contra una instancia real en el hito M6.
+Formato de fecha enviado: `AAAA-MM-DDT00:00:00`. Confirmado contra una instancia real en la validación manual de M6, junto con `PeriodType=Week`.
 
 **`custom`**: el endpoint declara sus `params` explícitamente.
 
@@ -296,12 +296,14 @@ El catálogo crece con el uso siguiendo la regla de `CLAUDE.md` ("Agregar un end
   - Respuesta 200 cuyo `Content-Type` no sea JSON → `P6HTTPError` explicando que probablemente un proxy devolvió la interfaz web o la sesión expiró.
 - **Guardarraíl:** endpoint `large` con `Filter` vacío → `GuardrailError`, salvo `allow_unfiltered=True`. El menú pide confirmación; en flags se usa `--allow-unfiltered`.
 - **`get_all(endpoint, params)`** — la API no tiene paginación:
-  1. Exige `Filter` (mismo guardarraíl).
-  2. Si el filtro contiene `:or:` → `UsageError`: la documentación no define paréntesis y la precedencia al agregar rangos no está garantizada.
-  3. Pide solo `ObjectId` con el filtro del usuario.
-  4. Ordena los IDs, los agrupa en lotes de `id_chunk_size` y pide cada lote con `<filtro> :and: ObjectId:gte:<primero> :and: ObjectId:lte:<último>`.
+  1. Exige `Filter` en cualquier endpoint, sin `--allow-unfiltered` (`GuardrailError`, salida 3).
+  2. Si el filtro contiene `:or:` (sin distinguir mayúsculas) → `UsageError`: la documentación no define paréntesis y la precedencia al agregar rangos no está garantizada.
+  3. Pide solo `ObjectId` con el filtro del usuario (sondeo, `ids()`).
+  4. Ordena los IDs, los agrupa en lotes de `id_chunk_size` (o `--chunk`) y pide cada lote con `<filtro> :and: ObjectId:gte:<primero> :and: ObjectId:lte:<último>` y `OrderBy=ObjectId asc`.
   5. Pausa `throttle_seconds` entre lotes y notifica progreso por callback.
-- **`get_spread(endpoint, ids, params)`**: trocea `ids` en lotes de `id_chunk_size`, con la misma pausa y el mismo callback.
+  6. Antes del login mide la URL del peor lote (rango con IDs de 19 dígitos).
+- **`get_spread(endpoint, params)`**: trocea la lista de IDs en lotes de `id_chunk_size`, con la misma pausa y el mismo callback, y junta las respuestas. La URL de cada lote se mide antes del login.
+- **Parámetros de spread:** `PeriodType` e `IncludeCumulative` se aceptan sin distinguir mayúsculas y se envían con el valor del catálogo; las fechas `AAAA-MM-DD` se validan (inicio ≤ fin); los IDs se normalizan como en §11.2.
 - **`fields(endpoint)`**: `GET {path}/fields`.
 
 ---
@@ -431,8 +433,8 @@ Consulta la documentación de Oracle o escribe ? en cualquier campo para ver ayu
 
 ### 11.2 Plantilla `spread`
 
-1. **Origen de los ObjectId:** *Escribirlos* (lista separada por comas) · *Desde un archivo exportado* (CSV o JSON con columna `ObjectId`) · *Desde una consulta* (se pide un Filter sobre la entidad base y se obtienen los IDs con `get_all`).
-2. `(Obligatorio) SpreadField`, con la misma regla de campos vacíos que Fields.
+1. **Origen de los ObjectId:** *Escribirlos* (lista separada por comas) · *Desde un archivo exportado* (CSV o JSON con columna `ObjectId`) · *Desde una consulta* (se pide un Filter obligatorio sobre la entidad base y se obtienen los IDs con el sondeo de `get_all`, una sola petición). Los IDs deben ser enteros positivos; se quitan espacios y repetidos conservando el orden.
+2. `(Obligatorio) SpreadField`, con la misma regla de campos vacíos que Fields. `?` lista los SpreadField válidos del endpoint (del catálogo, sin red) y vuelve a pedir el campo con lo ya escrito.
 3. `PeriodType` como lista de opciones, `Week` preseleccionado.
 4. `(Opcional) StartDate` y `(Opcional) EndDate` en formato `AAAA-MM-DD`, validados.
 5. `IncludeCumulative` Sí/No, por defecto Sí.
@@ -474,8 +476,8 @@ El comando equivalente permite repetir la consulta en modo flags.
 | `p6 syntax [TEMA]` | Guía de sintaxis de `filter`, `order-by` o `fields`; sin tema lista los temas |
 | `p6 fields ENDPOINT [--env NAME]` | Campos válidos de un endpoint |
 | `p6 get ENDPOINT --fields F [--filter X] [--order-by Y] [--env NAME] [--allow-unfiltered] [--max-rows N] [--json] [--output ARCHIVO]` | Lectura simple |
-| `p6 get-all ENDPOINT --fields F --filter X [--chunk N] [--env NAME] [--output ARCHIVO]` | Lectura masiva por lotes |
-| `p6 spread ENDPOINT (--ids 1,2,3 \| --ids-from ARCHIVO) --spread-fields F [--period Week] [--start D] [--end D] [--no-cumulative] [--env NAME] [--output ARCHIVO]` | Series temporales |
+| `p6 get-all ENDPOINT --fields F --filter X [--chunk N] [--env NAME] [--max-rows N] [--json] [--output ARCHIVO]` | Lectura masiva por lotes |
+| `p6 spread ENDPOINT (--ids 1,2,3 \| --ids-from ARCHIVO) --spread-fields F [--period Week] [--start D] [--end D] [--no-cumulative] [--env NAME] [--max-rows N] [--json] [--output ARCHIVO]` | Series temporales |
 
 La extensión de `--output` (`.csv` o `.json`) define el formato.
 
@@ -637,3 +639,15 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | En los menús, la tabla muestra 25 filas con el aviso «Mostrando 25 de N filas.», sin mencionar `--max-rows` ni `--json` | Esas opciones son del modo flags; la exportación llega en M7 |
 | `?` funciona en los tres campos del formulario `entity`: Fields lista los campos válidos; Filter y OrderBy muestran la guía de `p6 syntax` más el aviso de escribir el valor sin comillas dobles alrededor. Luego se vuelve a pedir el mismo campo. La cabecera dice «Consulta la documentación de Oracle o escribe ? en cualquier campo para ver ayuda aquí mismo.» | Pedido del usuario tras la validación manual: `?` en Filter u OrderBy se enviaba a P6 y la consulta fallaba; la documentación de Oracle y la ayuda en la terminal son caminos alternativos, no ambos obligatorios. Los ejemplos de las guías son de línea de comandos, donde sí se usan comillas |
 | «¿Qué sigue?» ofrece «Ver la tabla completa (N filas)», solo con más de 25 filas, y «Ver el JSON completo», con al menos una fila. Usan las filas ya recibidas, sin consultar de nuevo a P6, y luego vuelve el mismo menú. La tabla completa sigue recortando celdas a 40 caracteres; el JSON va completo (indentación 2, sin escapar tildes), como `p6 get --json`. Con más de 500 filas se pide confirmar, por defecto No | Pedido del usuario tras la validación manual: ver la salida completa sin exportar. Con miles de filas la terminal tarda, el inicio se pierde al desplazarse y un Ctrl+C a mitad cierra el programa |
+| Spread se muestra en la terminal como tabla por período: una fila por objeto × período con el ObjectId del objeto, `StartDate`, `EndDate` del período y cada SpreadField seguido de su `Cumulative<campo>` si viene. Si la respuesta no tiene esa forma, se avisa y se ofrece el JSON. «Ver el JSON completo» y `--json` muestran la respuesta de P6 tal cual | Decisión del usuario en M6. La forma sale de la documentación de Oracle 24.x (ReadActivitySpread); el formato largo del CSV sigue en M7 |
+| `p6 get-all` y `p6 spread` llevan `--max-rows` y `--json`, con el mismo comportamiento que `p6 get` | Decisión del usuario en M6: ver y redirigir los datos antes de que exista `--output` (M7) |
+| `get_all` exige Filter en cualquier endpoint, sin `--allow-unfiltered` (salida 3); tampoco acepta OrderBy: los lotes van en orden de ObjectId | Los lotes por rango parten de los IDs que cumplen el filtro; sin filtro serían toda la instancia |
+| `:or:` se rechaza en `get_all` sin distinguir mayúsculas, aunque esté dentro de un texto entre comillas | Mejor rechazar de más que enviar un filtro con precedencia no garantizada. El sondeo solo (origen «Desde una consulta») sí lo admite, porque no agrega rango |
+| El origen «Desde una consulta» usa solo el sondeo de `get_all` (una petición con `Fields=ObjectId`), no un `get_all` completo. Si el formulario reaparece con el mismo filtro, no se repite la consulta | Trae los mismos IDs con una petición en vez de varias |
+| `PeriodType` e `IncludeCumulative` se aceptan sin distinguir mayúsculas y se envían con el valor del catálogo (`Week`, `true`). El ejemplo de Oracle usa `WEEK`, pero P6 aceptó `Week` en la validación manual de M6 | Un solo valor enviado, fácil de cambiar si P6 exige otro |
+| Fechas de spread: se escriben `AAAA-MM-DD`, se validan (incluido inicio ≤ fin) y se envían como `AAAA-MM-DDT00:00:00` (§8.2), formato confirmado en la validación manual de M6 | Error de uso antes del login en lugar de un 400 de P6 |
+| `--ids-from` y el origen «Desde un archivo» leen CSV (`utf-8-sig`, delimitador `,` o `;`) o JSON (lista de objetos) con columna `ObjectId`. Los errores no citan el contenido del archivo | Excel en español guarda con `;`; el archivo puede tener datos del cliente |
+| `?` en SpreadField lista, sin red, los valores válidos del endpoint guardados en el catálogo (`ParamSpec.choices` del parámetro FIELDS): 72 para `spread.activity` (lista revisada por el usuario en la documentación de Oracle 24.x) y 26 para `spread.resourceAssignment` (su página de Oracle, que coincide con las propiedades de `Period`). No se validan antes de enviar: un valor fuera de la lista llega a P6 y, si no existe, vuelve como 400 con su pista | Pedido del usuario tras la validación manual de M6: escribir SpreadField sin ayuda era confuso. Reemplaza la decisión inicial de M6 de no ofrecer `?`. P6 no tiene `/fields` para spread; si cambia la versión de P6, la lista se revisa contra la rama correspondiente |
+| Los endpoints spread quedan habilitados en el menú; solo Exportar sigue con «(próximamente)» hasta M7 | M6 implementa el formulario spread |
+| Barra de progreso por lotes (`Lotes: i de N`, barra y tiempo) sobre el callback de `core`; en modo flags va a stderr | stdout queda limpio para `--json` |
+| Un error en cualquier lote de `get_all` o `get_spread` se propaga tal cual y se descarta lo ya recibido | No se muestra un resultado incompleto como si fuera completo |

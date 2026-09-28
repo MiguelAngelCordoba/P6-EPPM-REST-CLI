@@ -1,0 +1,38 @@
+[
+  {
+    "ActivityId": "A1000",
+    "ActivityObjectId": 4835,
+    "StartDate": "2026-01-05T00:00:00",
+    "EndDate": "2026-01-18T00:00:00",
+    "PeriodType": "Week",
+    "Period": [
+      {
+        "StartDate": "2026-01-05T00:00:00",
+        "EndDate": "2026-01-11T23:59:59",
+        "PlannedLaborUnits": 40.0,
+        "CumulativePlannedLaborUnits": 40.0
+      },
+      {
+        "StartDate": "2026-01-12T00:00:00",
+        "EndDate": "2026-01-18T23:59:59",
+        "PlannedLaborUnits": 32.0,
+        "CumulativePlannedLaborUnits": 72.0
+      }
+    ]
+  },
+  {
+    "ActivityId": "A1010",
+    "ActivityObjectId": 4845,
+    "StartDate": "2026-01-12T00:00:00",
+    "EndDate": "2026-01-18T00:00:00",
+    "PeriodType": "Week",
+    "Period": [
+      {
+        "StartDate": "2026-01-12T00:00:00",
+        "EndDate": "2026-01-18T23:59:59",
+        "PlannedLaborUnits": 16.0,
+        "CumulativePlannedLaborUnits": 16.0
+      }
+    ]
+  }
+]

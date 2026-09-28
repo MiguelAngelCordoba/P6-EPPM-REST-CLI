@@ -1,6 +1,7 @@
 """Comandos ``p6 endpoints``, ``p6 fields`` y ``p6 get`` (especificación §12 y §13)."""
 
 import json
+from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
@@ -640,3 +641,390 @@ def test_encabezado_con_separadores_en_espanol() -> None:
 )
 def test_texto_celda(valor: object, texto: str) -> None:
     assert render.texto_celda(valor) == texto
+
+
+# --- get-all -----------------------------------------------------------------------
+
+
+def crear_lotes() -> None:
+    """Perfil con lotes de 2 IDs y sin pausa, para no esperar en los tests."""
+    crear(id_chunk_size=2, throttle_seconds=0)
+
+
+def registrar_respuestas(
+    simulado: responses.RequestsMock, ruta: str, *respuestas: Simulada
+) -> None:
+    """Login, logout y, en orden, cada respuesta del GET a ``ruta``."""
+    simulado.add(LOGIN_OK.respuesta("POST", f"{BASE}/login"))
+    simulado.add(LOGOUT_OK.respuesta("POST", f"{BASE}/logout"))
+    for respuesta in respuestas:
+        simulado.add(respuesta.respuesta("GET", f"{BASE}{ruta}"))
+
+
+def consultas_get(simulado: responses.RequestsMock) -> list[dict[str, str]]:
+    return [
+        dict(parse_qsl(urlsplit(str(c.request.url)).query))
+        for c in simulado.calls
+        if c.request.method == "GET"
+    ]
+
+
+def filas_actividad(*ids: int) -> Simulada:
+    return json_simulado([{"ObjectId": numero, "Id": f"A{numero}"} for numero in ids])
+
+
+def registrar_get_all(simulado: responses.RequestsMock) -> None:
+    """Sondeo con 3 IDs y sus 2 lotes."""
+    sondeo = json_simulado([{"ObjectId": numero} for numero in (1003, 1001, 1002)])
+    registrar_respuestas(
+        simulado, "/activity", sondeo, filas_actividad(1001, 1002), filas_actividad(1003)
+    )
+
+
+def get_all_actividades(*extra: str) -> Result:
+    return p6("get-all", "activity", "--fields", "ObjectId,Id", "--filter", FILTRO, *extra)
+
+
+def test_get_all_tabla_con_todas_las_filas_de_los_lotes(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    registrar_get_all(http_simulado)
+
+    resultado = get_all_actividades()
+
+    assert resultado.exit_code == 0, resultado.output
+    assert "activity · 3 filas · " in resultado.stdout
+    for id_actividad in ("A1001", "A1002", "A1003"):
+        assert id_actividad in resultado.stdout
+    filtros = [consulta["Filter"] for consulta in consultas_get(http_simulado)]
+    assert filtros == [
+        FILTRO,
+        f"{FILTRO} :and: ObjectId:gte:1001 :and: ObjectId:lte:1002",
+        f"{FILTRO} :and: ObjectId:gte:1003 :and: ObjectId:lte:1003",
+    ]
+    assert llamadas(http_simulado, "POST", "/logout") == 1
+
+
+def test_get_all_json_con_stdout_limpio(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    registrar_get_all(http_simulado)
+
+    resultado = get_all_actividades("--json")
+
+    assert resultado.exit_code == 0, resultado.output
+    assert json.loads(resultado.stdout) == [
+        {"ObjectId": 1001, "Id": "A1001"},
+        {"ObjectId": 1002, "Id": "A1002"},
+        {"ObjectId": 1003, "Id": "A1003"},
+    ]
+
+
+def test_get_all_max_rows(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    registrar_get_all(http_simulado)
+
+    resultado = get_all_actividades("--max-rows", "2")
+
+    assert "A1002" in resultado.stdout
+    assert "A1003" not in resultado.stdout
+    assert "Mostrando 2 de 3 filas" in resultado.stdout
+
+
+def test_get_all_chunk_reemplaza_el_tamano_del_perfil(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    sondeo = json_simulado([{"ObjectId": numero} for numero in (1001, 1002, 1003)])
+    registrar_respuestas(http_simulado, "/activity", sondeo, filas_actividad(1001, 1002, 1003))
+
+    resultado = get_all_actividades("--chunk", "5")
+
+    assert resultado.exit_code == 0, resultado.output
+    assert len(consultas_get(http_simulado)) == 2
+
+
+@pytest.mark.parametrize("chunk", ["0", "-3"])
+def test_get_all_chunk_menor_que_1_sale_con_2(chunk: str) -> None:
+    crear_lotes()
+
+    assert get_all_actividades("--chunk", chunk).exit_code == 2
+
+
+def test_get_all_sin_filter_sale_con_2() -> None:
+    crear_lotes()
+
+    resultado = p6("get-all", "activity", "--fields", "ObjectId")
+
+    assert resultado.exit_code == 2
+
+
+def test_get_all_filtro_vacio_sale_con_3_sin_pedir_la_clave(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    secrets.borrar_clave("demo")
+
+    resultado = p6("get-all", "project", "--fields", "ObjectId", "--filter", " ")
+
+    assert resultado.exit_code == 3
+    assert "--filter" in resultado.output
+    assert "--allow-unfiltered" not in resultado.output
+    assert messages.PEDIR_CLAVE_TEMPORAL not in resultado.output
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_all_con_or_sale_con_2(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+
+    resultado = p6(
+        "get-all", "activity", "--fields", "ObjectId", "--filter", "Id:eq:'A' :or: Id:eq:'B'"
+    )
+
+    assert resultado.exit_code == 2
+    assert ":or:" in resultado.output
+    assert len(http_simulado.calls) == 0
+
+
+def test_get_all_de_spread_sale_con_2() -> None:
+    crear_lotes()
+
+    resultado = p6("get-all", "spread.activity", "--fields", "ObjectId", "--filter", FILTRO)
+
+    assert resultado.exit_code == 2
+    assert "p6 spread" in resultado.output
+
+
+def test_get_all_error_de_p6_sale_con_1(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    registrar_respuestas(
+        http_simulado, "/activity", json_simulado({"message": "Request failed."}, 500)
+    )
+
+    resultado = get_all_actividades()
+
+    assert resultado.exit_code == 1
+    assert messages.PISTAS_HTTP[500] in resultado.output
+    assert llamadas(http_simulado, "POST", "/logout") == 1
+
+
+# --- spread ------------------------------------------------------------------------
+
+SPREAD_OK = Simulada(200, "activity_spread_ok.json")
+
+
+def spread_actividades(*extra: str) -> Result:
+    return p6("spread", "spread.activity", "--spread-fields", "PlannedLaborUnits", *extra)
+
+
+def test_spread_con_ids_muestra_la_tabla_por_periodo(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", SPREAD_OK)
+
+    resultado = spread_actividades("--ids", "4835,4845", "--max-rows", "0")
+
+    assert resultado.exit_code == 0, resultado.output
+    salida = resultado.stdout
+    assert "spread.activity · 2 objetos · 3 períodos · " in salida
+    assert "CumulativePlannedLaborUnits" in salida
+    assert "2026-01-12T00:00:00" in salida
+    assert "72.0" in salida
+    assert consultas_get(http_simulado) == [
+        {
+            "ActivityObjectId": "4835,4845",
+            "SpreadField": "PlannedLaborUnits",
+            "PeriodType": "Week",
+            "IncludeCumulative": "true",
+            "DatabaseName": "orcl",
+        }
+    ]
+    assert llamadas(http_simulado, "POST", "/logout") == 1
+
+
+def test_spread_trocea_los_ids_segun_el_perfil(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    vacio = json_simulado([])
+    registrar_respuestas(http_simulado, "/spread/activitySpread", vacio, vacio)
+
+    resultado = spread_actividades("--ids", "1,2,3", "--json")
+
+    assert resultado.exit_code == 0, resultado.output
+    assert [c["ActivityObjectId"] for c in consultas_get(http_simulado)] == ["1,2", "3"]
+
+
+def test_spread_con_ids_desde_un_csv(http_simulado: responses.RequestsMock, tmp_path: Path) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", SPREAD_OK)
+    archivo = tmp_path / "actividades.csv"
+    archivo.write_text("ObjectId;Id\n4835;A1000\n4845;A1010\n", encoding="utf-8-sig")
+
+    resultado = spread_actividades("--ids-from", str(archivo))
+
+    assert resultado.exit_code == 0, resultado.output
+    assert consultas_get(http_simulado)[0]["ActivityObjectId"] == "4835,4845"
+
+
+def test_spread_archivo_sin_columna_sale_con_2(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear_lotes()
+    archivo = tmp_path / "actividades.csv"
+    archivo.write_text("Id\nA1000\n", encoding="utf-8")
+
+    resultado = spread_actividades("--ids-from", str(archivo))
+
+    assert resultado.exit_code == 2
+    assert "ObjectId" in resultado.output
+    assert len(http_simulado.calls) == 0
+
+
+@pytest.mark.parametrize(
+    "opciones", [(), ("--ids", "1", "--ids-from", "ids.csv")], ids=["ninguna", "ambas"]
+)
+def test_spread_exige_ids_o_ids_from(
+    http_simulado: responses.RequestsMock, opciones: tuple[str, ...]
+) -> None:
+    crear_lotes()
+
+    resultado = spread_actividades(*opciones)
+
+    assert resultado.exit_code == 2
+    assert "--ids-from" in resultado.output
+    assert len(http_simulado.calls) == 0
+
+
+def test_spread_envia_periodo_fechas_y_sin_acumulados(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", json_simulado([]))
+
+    resultado = spread_actividades(
+        "--ids",
+        "4835",
+        "--period",
+        "month",
+        "--start",
+        "2026-01-01",
+        "--end",
+        "2026-03-31",
+        "--no-cumulative",
+    )
+
+    assert resultado.exit_code == 0, resultado.output
+    assert consultas_get(http_simulado)[0] == {
+        "ActivityObjectId": "4835",
+        "SpreadField": "PlannedLaborUnits",
+        "PeriodType": "Month",
+        "StartDate": "2026-01-01T00:00:00",
+        "EndDate": "2026-03-31T00:00:00",
+        "IncludeCumulative": "false",
+        "DatabaseName": "orcl",
+    }
+
+
+@pytest.mark.parametrize(
+    "opciones",
+    [
+        ("--period", "Weekly"),
+        ("--start", "05/01/2026"),
+        ("--start", "2026-02-01", "--end", "2026-01-01"),
+        ("--ids", "abc"),
+    ],
+    ids=["periodo", "fecha", "rango", "id"],
+)
+def test_spread_parametro_invalido_sale_con_2_sin_pedir_la_clave(
+    http_simulado: responses.RequestsMock, opciones: tuple[str, ...]
+) -> None:
+    crear_lotes()
+    secrets.borrar_clave("demo")
+    extra = opciones if "--ids" in opciones else ("--ids", "4835", *opciones)
+
+    resultado = spread_actividades(*extra)
+
+    assert resultado.exit_code == 2
+    assert messages.PEDIR_CLAVE_TEMPORAL not in resultado.output
+    assert len(http_simulado.calls) == 0
+
+
+def test_spread_json_imprime_la_respuesta_tal_cual(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", SPREAD_OK)
+
+    resultado = spread_actividades("--ids", "4835,4845", "--json")
+
+    assert resultado.exit_code == 0, resultado.output
+    assert json.loads(resultado.stdout) == json.loads(leer_fixture("activity_spread_ok.json"))
+
+
+def test_spread_forma_inesperada_avisa_y_sale_con_0(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    crear_lotes()
+    registrar_respuestas(
+        http_simulado, "/spread/activitySpread", json_simulado([{"Otra": "forma"}])
+    )
+
+    resultado = spread_actividades("--ids", "4835")
+
+    assert resultado.exit_code == 0, resultado.output
+    assert "spread.activity · 1 fila · " in resultado.stdout
+    assert messages.AVISO_SPREAD_SIN_TABLA in resultado.stderr
+
+
+def test_spread_de_un_entity_sale_con_2() -> None:
+    crear_lotes()
+
+    resultado = p6("spread", "activity", "--spread-fields", "X", "--ids", "1")
+
+    assert resultado.exit_code == 2
+    assert "p6 get" in resultado.output
+
+
+def test_spread_400_sale_con_1_con_pista(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    registrar_respuestas(
+        http_simulado,
+        "/spread/activitySpread",
+        json_simulado({"message": "Invalid SpreadField"}, 400),
+    )
+
+    resultado = spread_actividades("--ids", "4835")
+
+    assert resultado.exit_code == 1
+    assert "Invalid SpreadField" in resultado.output
+    assert messages.PISTAS_HTTP[400] in resultado.output
+    assert llamadas(http_simulado, "POST", "/logout") == 1
+
+
+def test_spread_login_fallido_sale_con_1(http_simulado: responses.RequestsMock) -> None:
+    crear_lotes()
+    http_simulado.add(LOGIN_DATABASE_INVALIDA.respuesta("POST", f"{BASE}/login"))
+
+    resultado = spread_actividades("--ids", "4835")
+
+    assert resultado.exit_code == 1
+    assert "p6 doctor demo" in resultado.output
+    assert llamadas(http_simulado, "POST", "/login") == 1
+
+
+@pytest.mark.parametrize(
+    ("comando", "opciones"),
+    [
+        ("get-all", ["--fields", "--filter", "--chunk", "--max-rows", "--json"]),
+        (
+            "spread",
+            ["--ids", "--ids-from", "--spread-fields", "--period", "--start", "--end"],
+        ),
+    ],
+)
+def test_ayuda_de_los_comandos_por_lotes(comando: str, opciones: list[str]) -> None:
+    resultado = p6(comando, "--help")
+
+    assert resultado.exit_code == 0, resultado.output
+    for opcion in opciones:
+        assert opcion in resultado.output

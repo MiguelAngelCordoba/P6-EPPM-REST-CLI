@@ -8,13 +8,20 @@ from typing import Any
 from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
 from p6cli import __version__
 from p6cli.cli import messages
 from p6cli.core.catalog import Endpoint
+from p6cli.core.client import Progreso
 from p6cli.core.diagnostics import DiagnosticReport, EstadoDiagnostico
 from p6cli.core.errors import MotivoAuth, MotivoHTTP, P6CliError
 from p6cli.core.profiles import Profile
@@ -174,10 +181,12 @@ def tabla_endpoints(entradas: Sequence[tuple[int, Endpoint]]) -> None:
     Console().print(tabla)
 
 
-def lista_campos(endpoint: str, campos: Sequence[str]) -> None:
-    """Imprime los campos válidos de un endpoint en columnas."""
+def lista_campos(
+    endpoint: str, campos: Sequence[str], titulo: str = messages.TITULO_CAMPOS
+) -> None:
+    """Imprime los campos válidos de un endpoint en columnas, bajo ``titulo``."""
     consola = Console()
-    titulo = messages.TITULO_CAMPOS.format(endpoint=endpoint, cantidad=len(campos))
+    titulo = titulo.format(endpoint=endpoint, cantidad=len(campos))
     consola.print(Text(titulo, style="bold"))
     consola.print(Columns([Text(campo) for campo in campos], padding=(0, 3)))
 
@@ -207,9 +216,29 @@ def encabezado_resultados(endpoint: str, filas: int, segundos: float) -> str:
     return messages.ENCABEZADO_RESULTADOS.format(
         endpoint=endpoint,
         filas=numero(filas),
-        unidad=messages.UNIDAD_FILA if filas == 1 else messages.UNIDAD_FILAS,
-        segundos=f"{segundos:.1f}".replace(".", ","),
+        unidad=_unidad(filas, messages.UNIDAD_FILA, messages.UNIDAD_FILAS),
+        segundos=_segundos(segundos),
     )
+
+
+def _unidad(cantidad: int, singular: str, plural: str) -> str:
+    return singular if cantidad == 1 else plural
+
+
+def encabezado_spread(endpoint: str, objetos: int, periodos: int, segundos: float) -> str:
+    """«spread.activity · 3 objetos · 36 períodos · 1,4 s»."""
+    return messages.ENCABEZADO_SPREAD.format(
+        endpoint=endpoint,
+        objetos=numero(objetos),
+        unidad_objetos=_unidad(objetos, messages.UNIDAD_OBJETO, messages.UNIDAD_OBJETOS),
+        periodos=numero(periodos),
+        unidad_periodos=_unidad(periodos, messages.UNIDAD_PERIODO, messages.UNIDAD_PERIODOS),
+        segundos=_segundos(segundos),
+    )
+
+
+def _segundos(segundos: float) -> str:
+    return f"{segundos:.1f}".replace(".", ",")
 
 
 def tabla_resultados(
@@ -238,6 +267,12 @@ def tabla_resultados(
     consola.print(tabla)
     if len(mostradas) < len(filas):
         consola.print(aviso.format(mostradas=numero(len(mostradas)), total=numero(len(filas))))
+
+
+def aviso_sin_tabla(encabezado: str, aviso: str) -> None:
+    """Encabezado de resultados y, en stderr, por qué la respuesta no se muestra como tabla."""
+    Console().print(Text(encabezado, style="bold"))
+    Console(stderr=True).print(Text(aviso), soft_wrap=True)
 
 
 def json_resultados(filas: Sequence[Mapping[str, Any]]) -> None:
@@ -279,15 +314,17 @@ def pantalla_credenciales(perfil: Profile, temporal: bool) -> None:
     consola.print()
 
 
-def cabecera_formulario(endpoint: Endpoint) -> None:
-    """Encabezado del formulario ``entity`` con la ayuda de §11.1."""
+def cabecera_formulario(
+    endpoint: Endpoint, ayuda: Sequence[str] = messages.AYUDA_FORMULARIO
+) -> None:
+    """Encabezado de un formulario de parámetros con sus líneas de ayuda (§11)."""
     consola = Console()
     consola.print()
     titulo = messages.CABECERA_FORMULARIO.format(
         ruta=endpoint.path, descripcion=endpoint.description
     )
     consola.print(Text(titulo, style="bold"))
-    for linea in messages.AYUDA_FORMULARIO:
+    for linea in ayuda:
         consola.print(Text(linea))
     consola.print()
 
@@ -324,6 +361,31 @@ def progreso_consulta() -> Iterator[None]:
     ) as progreso:
         progreso.add_task(messages.ESPERANDO_RESPUESTA, total=None)
         yield
+
+
+@contextmanager
+def progreso_lotes(*, stderr: bool = False) -> Iterator[Progreso]:
+    """Barra de progreso por lotes con el tiempo transcurrido; desaparece al terminar.
+
+    Entrega el callback ``on_progress(hechos, total)`` de ``core``. Hasta el primer aviso
+    (p. ej. mientras se buscan los ObjectId) se ve como un indicador de espera. ``stderr``
+    la saca de stdout, para no mezclarse con ``--json``.
+    """
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=Console(stderr=stderr),
+        transient=True,
+    ) as progreso:
+        tarea = progreso.add_task(messages.ESPERANDO_RESPUESTA, total=None)
+
+        def avisar(hechos: int, total: int) -> None:
+            descripcion = messages.PROGRESO_LOTES.format(hechos=numero(hechos), total=numero(total))
+            progreso.update(tarea, description=descripcion, completed=hechos, total=total)
+
+        yield avisar
 
 
 # --- Guías de sintaxis ----------------------------------------------------------

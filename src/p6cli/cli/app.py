@@ -4,6 +4,7 @@ import json
 import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -13,8 +14,27 @@ from p6cli import __version__
 from p6cli.cli import forms, menus, messages, render
 from p6cli.cli.prompter import PrompterQuestionary, PrompterTexto
 from p6cli.core import catalog, profiles, secrets
-from p6cli.core.catalog import FIELDS, FILTER, ORDER_BY, Endpoint, Plantilla
-from p6cli.core.client import Cliente, validar_consulta
+from p6cli.core.catalog import (
+    END_DATE,
+    FIELDS,
+    FILTER,
+    INCLUDE_CUMULATIVE,
+    ORDER_BY,
+    PERIOD_TYPE,
+    PERIODO_POR_DEFECTO,
+    SPREAD_FIELD,
+    START_DATE,
+    Endpoint,
+    Plantilla,
+)
+from p6cli.core.client import (
+    Cliente,
+    Fila,
+    filas_por_periodo,
+    validar_consulta,
+    validar_lectura_masiva,
+    validar_spread,
+)
 from p6cli.core.diagnostics import EstadoDiagnostico
 from p6cli.core.errors import (
     AuthError,
@@ -28,6 +48,7 @@ from p6cli.core.errors import (
     SecretStoreError,
     UsageError,
 )
+from p6cli.core.export import leer_ids
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import Sesion
 
@@ -220,6 +241,9 @@ def doctor(
 
 ArgumentoEndpoint = Annotated[str, typer.Argument(help=messages.AYUDA_ARG_ENDPOINT)]
 OpcionEnv = Annotated[str | None, typer.Option("--env", help=messages.AYUDA_OPCION_ENV)]
+OpcionMaxRows = Annotated[
+    int, typer.Option("--max-rows", min=0, help=messages.AYUDA_OPCION_MAX_ROWS)
+]
 
 
 def _endpoint_entity(clave: str) -> Endpoint:
@@ -285,6 +309,16 @@ def campos(endpoint: ArgumentoEndpoint, env: OpcionEnv = None) -> None:
         render.lista_campos(destino.key, lista)
 
 
+def _imprimir_filas(
+    filas: list[Fila], columnas: list[str], max_rows: int, encabezado: str, como_json: bool
+) -> None:
+    """Tabla con las primeras ``max_rows`` filas o, con ``--json``, la lista completa."""
+    if como_json:
+        typer.echo(json.dumps(filas, indent=2, ensure_ascii=False))
+        return
+    render.tabla_resultados(filas, columnas, max_rows, encabezado)
+
+
 @app.command("get", help=messages.AYUDA_GET)
 def get(
     endpoint: ArgumentoEndpoint,
@@ -295,9 +329,7 @@ def get(
     allow_unfiltered: Annotated[
         bool, typer.Option("--allow-unfiltered", help=messages.AYUDA_OPCION_ALLOW_UNFILTERED)
     ] = False,
-    max_rows: Annotated[
-        int, typer.Option("--max-rows", min=0, help=messages.AYUDA_OPCION_MAX_ROWS)
-    ] = render.FILAS_TABLA,
+    max_rows: OpcionMaxRows = render.FILAS_TABLA,
     como_json: Annotated[bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON)] = False,
 ) -> None:
     """Lectura simple. Valida todo antes de pedir la clave y de hacer el login."""
@@ -311,12 +343,104 @@ def get(
         with Sesion(perfil, clave) as sesion, _esperando():
             filas = Cliente(sesion).get(destino, params, allow_unfiltered=allow_unfiltered)
         segundos = time.perf_counter() - inicio
+        encabezado = render.encabezado_resultados(destino.key, len(filas), segundos)
+        _imprimir_filas(filas, consulta[FIELDS].split(","), max_rows, encabezado, como_json)
+
+
+@app.command("get-all", help=messages.AYUDA_GET_ALL)
+def get_all(
+    endpoint: ArgumentoEndpoint,
+    fields: Annotated[str, typer.Option("--fields", help=messages.AYUDA_OPCION_FIELDS)],
+    filtro: Annotated[str, typer.Option("--filter", help=messages.AYUDA_OPCION_FILTER_LOTES)],
+    chunk: Annotated[
+        int | None, typer.Option("--chunk", min=1, help=messages.AYUDA_OPCION_CHUNK)
+    ] = None,
+    env: OpcionEnv = None,
+    max_rows: OpcionMaxRows = render.FILAS_TABLA,
+    como_json: Annotated[bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON)] = False,
+) -> None:
+    """Lectura masiva por lotes. Valida todo antes de pedir la clave y de hacer el login."""
+    with _errores_a_salida():
+        destino = _endpoint_entity(endpoint)
+        perfil = _perfil(env)
+        params = {FIELDS: fields, FILTER: filtro}
+        consulta = validar_lectura_masiva(perfil, destino, params)
+        clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
+        inicio = time.perf_counter()
+        with Sesion(perfil, clave) as sesion, render.progreso_lotes(stderr=True) as avisar:
+            filas = Cliente(sesion).get_all(destino, params, tamano_lote=chunk, on_progress=avisar)
+        segundos = time.perf_counter() - inicio
+        encabezado = render.encabezado_resultados(destino.key, len(filas), segundos)
+        _imprimir_filas(filas, consulta[FIELDS].split(","), max_rows, encabezado, como_json)
+
+
+def _endpoint_spread(clave: str) -> Endpoint:
+    """Endpoint del catálogo con plantilla spread; ``NO_ES_SPREAD`` si no lo es."""
+    endpoint = catalog.obtener(clave)
+    catalog.param_ids(endpoint)
+    return endpoint
+
+
+def _ids_de_opciones(ids: str | None, ids_from: Path | None) -> str:
+    """Lista de ObjectId de ``--ids`` o de ``--ids-from``; exactamente una de las dos."""
+    if (ids is None) == (ids_from is None):
+        raise UsageError(MotivoUso.ORIGEN_IDS)
+    if ids is not None:
+        return ids
+    assert ids_from is not None
+    return ",".join(str(numero) for numero in leer_ids(ids_from))
+
+
+@app.command("spread", help=messages.AYUDA_SPREAD)
+def spread(
+    endpoint: ArgumentoEndpoint,
+    spread_fields: Annotated[
+        str, typer.Option("--spread-fields", help=messages.AYUDA_OPCION_SPREAD_FIELDS)
+    ],
+    ids: Annotated[str | None, typer.Option("--ids", help=messages.AYUDA_OPCION_IDS)] = None,
+    ids_from: Annotated[
+        Path | None, typer.Option("--ids-from", help=messages.AYUDA_OPCION_IDS_FROM)
+    ] = None,
+    periodo: Annotated[
+        str, typer.Option("--period", help=messages.AYUDA_OPCION_PERIOD)
+    ] = PERIODO_POR_DEFECTO,
+    fecha_inicio: Annotated[str, typer.Option("--start", help=messages.AYUDA_OPCION_START)] = "",
+    fecha_fin: Annotated[str, typer.Option("--end", help=messages.AYUDA_OPCION_END)] = "",
+    sin_acumulado: Annotated[
+        bool, typer.Option("--no-cumulative", help=messages.AYUDA_OPCION_NO_CUMULATIVE)
+    ] = False,
+    env: OpcionEnv = None,
+    max_rows: OpcionMaxRows = render.FILAS_TABLA,
+    como_json: Annotated[
+        bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON_SPREAD)
+    ] = False,
+) -> None:
+    """Series temporales por lotes de ObjectId. Valida todo antes de pedir la clave."""
+    with _errores_a_salida():
+        destino = _endpoint_spread(endpoint)
+        params = {
+            catalog.param_ids(destino).name: _ids_de_opciones(ids, ids_from),
+            SPREAD_FIELD: spread_fields,
+            PERIOD_TYPE: periodo,
+            START_DATE: fecha_inicio,
+            END_DATE: fecha_fin,
+            INCLUDE_CUMULATIVE: "false" if sin_acumulado else "true",
+        }
+        perfil = _perfil(env)
+        lotes = validar_spread(perfil, destino, params)
+        clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
+        inicio = time.perf_counter()
+        with Sesion(perfil, clave) as sesion, render.progreso_lotes(stderr=True) as avisar:
+            respuesta = Cliente(sesion).get_spread(destino, params, on_progress=avisar)
+        segundos = time.perf_counter() - inicio
         if como_json:
-            typer.echo(json.dumps(filas, indent=2, ensure_ascii=False))
+            typer.echo(json.dumps(respuesta, indent=2, ensure_ascii=False))
             return
-        render.tabla_resultados(
-            filas,
-            consulta[FIELDS].split(","),
-            max_rows,
-            render.encabezado_resultados(destino.key, len(filas), segundos),
-        )
+        tabla = filas_por_periodo(respuesta, destino, lotes[0][SPREAD_FIELD].split(","))
+        if tabla is None:
+            encabezado = render.encabezado_resultados(destino.key, len(respuesta), segundos)
+            render.aviso_sin_tabla(encabezado, messages.AVISO_SPREAD_SIN_TABLA)
+            return
+        columnas, filas = tabla
+        encabezado = render.encabezado_spread(destino.key, len(respuesta), len(filas), segundos)
+        render.tabla_resultados(filas, columnas, max_rows, encabezado)
