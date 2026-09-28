@@ -21,7 +21,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M6 | Lecturas masivas y spread | ✅ |
 | M7 | Exportación | ✅ |
 | M8 | Modo automatización | Descartado |
-| M9 | Portafolio y release v1.0.0 | ⬜ |
+| M9 | Portafolio y release v1.0.0 | ✅ (falta publicar el tag y la release) |
 
 ---
 
@@ -284,13 +284,29 @@ Limpieza de lo que ya existía de ese modo:
 
 ## M9 — Portafolio y release v1.0.0
 
-- [ ] `README.md` completo: qué es, instalación, uso con capturas o GIF **grabados contra el mock**, arquitectura, decisiones de diseño y seguridad.
-- [ ] Aviso de que el proyecto no está afiliado a Oracle.
-- [ ] `LICENSE` (MIT o Apache-2.0), después de confirmar con la empresa.
-- [ ] `CHANGELOG.md`.
-- [ ] Revisión final: ningún dato de clientes en el código, los docs **ni el historial de git**.
-- [ ] Tag `v1.0.0` y release en GitHub.
-- [ ] Pasar el repositorio a público.
+- [x] `README.md` completo: qué es, instalación, uso con ejemplos de salida en texto, arquitectura, decisiones de diseño y seguridad.
+- [x] Aviso de que el proyecto no está afiliado a Oracle.
+- ~~`LICENSE` (MIT o Apache-2.0), después de confirmar con la empresa.~~ Descartado: la v1.0.0 sale sin licencia (todos los derechos reservados).
+- [x] `CHANGELOG.md`.
+- [x] Revisión final: ningún dato de clientes en el código, los docs **ni el historial de git**.
+- [x] Versión `1.0.0` en `src/p6cli/__init__.py`.
+- [ ] Tag `v1.0.0` y release en GitHub (tras el merge a `main`).
+- [x] Pasar el repositorio a público: hecho el 2026-09-24, antes de M2, por decisión de la empresa.
+
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
+
+- README solo con texto: ejemplos de salida como bloques de código, sin capturas, sin GIF y sin script de demostración (no existía un mock ejecutable). Las salidas se generaron con el HTTP simulado de los tests.
+- Sin licencia en la v1.0.0: no hay `LICENSE`, así que aplica «todos los derechos reservados». El README lo dice.
+- `P6EPPM`, DatabaseName genérico de algunos tests y de §10.1, se cambia por `otra_db` para usar solo valores de muestra. El historial no se reescribe porque no era un valor real.
+- No está instalado `gh`. Claude crea el tag anotado local y redacta las notas; el usuario hace el merge a `main`, el push del tag y crea la release en la web de GitHub.
+
+**Revisión de datos de clientes** (2026-09-28, árbol de trabajo y `git log --all -p`):
+
+- Hosts: solo `localhost`, `*.example.com`, `docs.oracle.com`, `github.com` y los sitios de referencia del README y el CHANGELOG. Sin direcciones IP.
+- Correos: solo el del autor de los commits y `noreply@anthropic.com`.
+- DatabaseName: solo `orcl` y valores genéricos de prueba. `env.example` (ya eliminado) tenía solo valores de muestra.
+- `docs/APRENDIZAJES.md`: describe patrones (`p6ws.<dominio>`), sin nombres, hosts ni alias reales. Los fixtures son sintéticos.
+- `gitleaks` (pre-commit, todos los archivos): sin hallazgos. El gitleaks de CI revisa el historial completo en cada push.
 
 ---
 

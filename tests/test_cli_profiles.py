@@ -90,14 +90,14 @@ def test_list_sin_perfiles() -> None:
 
 def test_list_muestra_perfiles_con_clave_enmascarada() -> None:
     crear("demo")
-    crear("otro", host="https://p6ws.example.com", database_name="P6EPPM")
+    crear("otro", host="https://p6ws.example.com", database_name="otra_db")
 
     resultado = invocar("list")
 
     assert resultado.exit_code == 0
     assert "demo" in resultado.output
     assert "p6ws.example.com" in resultado.output
-    assert "P6EPPM" in resultado.output
+    assert "otra_db" in resultado.output
     assert resultado.output.count(MASCARA) == 2
     assert CLAVE not in resultado.output
 
@@ -387,13 +387,13 @@ def test_add_fallo_corregir_reabre_el_asistente_con_lo_escrito(
 ) -> None:
     logins(http_simulado, LOGIN_RECHAZADO, LOGIN_OK)
     # Corrige solo el DatabaseName; Enter conserva el resto, incluida la clave escrita.
-    correccion = respuestas("c", "", "", "", "P6EPPM", "", "", "")
+    correccion = respuestas("c", "", "", "", "otra_db", "", "", "")
 
     resultado = invocar("add", entrada=ALTA_DEMO + correccion)
 
     assert resultado.exit_code == 0, resultado.output
     assert messages.AVISO_EDITAR in resultado.output
-    assert ProfileStore().obtener("demo") == perfil(database_name="P6EPPM")
+    assert ProfileStore().obtener("demo") == perfil(database_name="otra_db")
     assert secrets.leer_clave("demo") == CLAVE
     assert llamadas(http_simulado, "POST", "/login") == 2
 
@@ -481,13 +481,13 @@ def test_edit_renombra_y_mueve_clave_y_predeterminado() -> None:
 
 def test_edit_cambia_datos_y_clave() -> None:
     crear("demo")
-    entrada = respuestas("", "https://p6ws.example.com/p6ws", "", "P6EPPM", "", "ClaveNueva2", "")
+    entrada = respuestas("", "https://p6ws.example.com/p6ws", "", "otra_db", "", "ClaveNueva2", "")
 
     resultado = invocar("edit", "demo", entrada=entrada)
 
     assert resultado.exit_code == 0
     editado = ProfileStore().obtener("demo")
-    assert (editado.host, editado.database_name) == ("https://p6ws.example.com", "P6EPPM")
+    assert (editado.host, editado.database_name) == ("https://p6ws.example.com", "otra_db")
     assert secrets.leer_clave("demo") == "ClaveNueva2"
     assert "ClaveNueva2" not in resultado.output
 
@@ -547,7 +547,7 @@ def test_edit_sin_clave_guardada_la_exige(http_simulado: responses.RequestsMock)
 def test_edit_fallo_cancelar_no_cambia_nada(http_simulado: responses.RequestsMock) -> None:
     crear("demo")
     logins(http_simulado, LOGIN_RECHAZADO)
-    entrada = respuestas("", "", "", "P6EPPM", "", "", "", "x")
+    entrada = respuestas("", "", "", "otra_db", "", "", "", "x")
 
     resultado = invocar("edit", "demo", entrada=entrada)
 
@@ -559,12 +559,12 @@ def test_edit_fallo_cancelar_no_cambia_nada(http_simulado: responses.RequestsMoc
 def test_edit_fallo_guardar_de_todas_formas(http_simulado: responses.RequestsMock) -> None:
     crear("demo")
     logins(http_simulado, LOGIN_RECHAZADO)
-    entrada = respuestas("", "", "", "P6EPPM", "", "", "", "g")
+    entrada = respuestas("", "", "", "otra_db", "", "", "", "g")
 
     resultado = invocar("edit", "demo", entrada=entrada)
 
     assert resultado.exit_code == 0
-    assert ProfileStore().obtener("demo").database_name == "P6EPPM"
+    assert ProfileStore().obtener("demo").database_name == "otra_db"
 
 
 def test_edit_corregir_puede_volver_al_nombre_original(
