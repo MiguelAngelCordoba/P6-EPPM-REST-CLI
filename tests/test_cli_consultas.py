@@ -1,6 +1,7 @@
 """Comandos ``p6 endpoints``, ``p6 fields`` y ``p6 get`` (especificación §12 y §13)."""
 
 import json
+import re
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -1026,5 +1027,7 @@ def test_ayuda_de_los_comandos_por_lotes(comando: str, opciones: list[str]) -> N
     resultado = p6(comando, "--help")
 
     assert resultado.exit_code == 0, resultado.output
+    # En GitHub Actions, Typer fuerza colores en la ayuda: se quitan antes de comparar.
+    ayuda = re.sub(r"\x1b\[[0-9;]*m", "", resultado.output)
     for opcion in opciones:
-        assert opcion in resultado.output
+        assert opcion in ayuda
