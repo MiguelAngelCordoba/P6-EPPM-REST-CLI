@@ -61,7 +61,7 @@ def crear(nombre: str = "demo", clave: str | None = CLAVE, **cambios: object) ->
 
 
 def crear_otro() -> Profile:
-    return crear("otro", host="https://p6ws.example.com", database_name="P6EPPM")
+    return crear("otro", host="https://p6ws.example.com", database_name="otra_db")
 
 
 def ejecutar(*respuestas: tuple[str, object]) -> PrompterGuion:
@@ -103,8 +103,8 @@ def test_inicio_muestra_banner_y_perfiles_con_el_predeterminado_preseleccionado(
     assert inicio.mensaje == messages.PREGUNTA_AMBIENTE
     assert inicio.por_defecto == demo
     titulos = inicio.titulos()
-    assert titulos[0] == "demo   localhost:7001     orcl     (predeterminado)"
-    assert titulos[1] == "otro   p6ws.example.com   P6EPPM"
+    assert titulos[0] == "demo   localhost:7001     orcl      (predeterminado)"
+    assert titulos[1] == "otro   p6ws.example.com   otra_db"
     assert titulos[-3:] == [
         messages.OPCION_AGREGAR,
         messages.OPCION_ADMINISTRAR,
@@ -771,7 +771,7 @@ def test_administrar_editar_usa_el_asistente_con_los_valores_actuales(
             escribir("demo"),
             escribir("https://localhost:7001/p6ws"),
             confirmar(True),
-            escribir("P6EPPM"),
+            escribir("otra_db"),
             escribir("admin"),
             oculta(""),
             elegir(ModoTLS.VALIDAR),
@@ -787,7 +787,7 @@ def test_administrar_editar_usa_el_asistente_con_los_valores_actuales(
         "orcl",
         "admin",
     ]
-    assert ProfileStore().obtener("demo").database_name == "P6EPPM"
+    assert ProfileStore().obtener("demo").database_name == "otra_db"
     assert secrets.leer_clave("demo") == CLAVE
 
 

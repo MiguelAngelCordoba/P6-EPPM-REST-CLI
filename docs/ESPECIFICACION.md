@@ -318,7 +318,7 @@ P6 EPPM REST CLI  v1.0 — solo lectura
 
 ? ¿Qué ambiente quieres consultar?
  ❯ demo         localhost:7001        orcl      (predeterminado)
-   otro         p6ws.example.com      P6EPPM
+   otro         p6ws.example.com      otra_db
    ─────────────
    + Agregar ambiente
    ⚙ Administrar ambientes
@@ -650,3 +650,6 @@ Se descartó en el hito M8 porque no aplica: el programa está pensado para uso 
 | Spread cuya respuesta no tiene la forma esperada: en el menú, «Exportar a CSV» deshabilitado con el motivo y JSON habilitado; con `--output x.csv` no se escribe nada, se avisa que use `.json` y sale con 1 | No se exporta a medias algo que no se pudo aplanar |
 | Un error al escribir (permisos, carpeta inexistente que no se puede crear…) es `UsageError` (salida 2) con la ruta y el tipo de excepción, lanzado sin la excepción original; se borra el archivo parcial. En el menú se muestra y se vuelve a «¿Qué sigue?» | Mismo criterio que `leer_ids`: el mensaje de la excepción no llega al usuario |
 | Se descarta el hito M8 (modo por variables de entorno, §15): no hay perfil `env` ni `env.example`, y `env` deja de ser un nombre reservado. Sin backend de keyring, el error ya no remite a ese modo | No aplica: el programa está pensado para uso manual. Además, las variables de entorno exponen la clave a otros procesos y a logs; el keyring es más seguro |
+| El README de la v1.0.0 muestra ejemplos de salida como bloques de texto, sin capturas, sin GIF y sin script de demostración. Las salidas se generaron con el HTTP simulado de los tests, con valores de muestra | Decisión del usuario en M9: no existía un mock ejecutable y el texto se mantiene junto con el código |
+| La v1.0.0 se publica sin licencia (no hay `LICENSE`): aplica «todos los derechos reservados» y el README lo indica | Decisión del usuario en M9 |
+| Release v1.0.0 manual: tag anotado `v1.0.0` sobre `main`; la release se crea en la web de GitHub con el texto del `CHANGELOG.md` | No se usa `gh`; publicar lo hace el usuario |
