@@ -5,6 +5,7 @@ derivado del orden de ``CATALOGO`` y nunca se persiste.
 """
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 
@@ -33,7 +34,12 @@ class Plantilla(StrEnum):
 
 @dataclass(frozen=True)
 class ParamSpec:
-    """Un query param de P6, con su nombre exacto."""
+    """Un query param de P6, con su nombre exacto.
+
+    ``choices`` son las opciones de un ENUM o un BOOL, que se validan al enviar. En un
+    parámetro FIELDS son los valores válidos según la documentación de Oracle: se listan
+    como ayuda con ``?`` y no se validan (P6 responde 400 si alguno no existe).
+    """
 
     name: str
     kind: ParamKind
@@ -76,18 +82,144 @@ PARAMS_ENTITY: tuple[ParamSpec, ...] = (
     ParamSpec(ORDER_BY, ParamKind.ORDER, required=False),
 )
 
+SPREAD_FIELD = "SpreadField"
+PERIOD_TYPE = "PeriodType"
+START_DATE = "StartDate"
+END_DATE = "EndDate"
+INCLUDE_CUMULATIVE = "IncludeCumulative"
+
 PERIODOS = ("Hour", "Day", "Week", "Month", "Quarter", "Year", "FinancialPeriod")
+PERIODO_POR_DEFECTO = "Week"
+VALORES_BOOL = ("true", "false")
 
 
-def params_spread(param_ids: str) -> tuple[ParamSpec, ...]:
-    """Parámetros de la plantilla spread; ``param_ids`` es el nombre del param de IDs."""
+# SpreadField válidos de cada spread, tal como los lista la documentación de Oracle (24.x).
+# ReadActivitySpread: revisados por el usuario tras la validación manual de M6.
+CAMPOS_SPREAD_ACTIVIDAD: tuple[str, ...] = (
+    "ActualCost",
+    "ActualExpenseCost",
+    "ActualLaborCost",
+    "ActualLaborUnits",
+    "ActualMaterialCost",
+    "ActualNonLaborCost",
+    "ActualNonLaborUnits",
+    "ActualTotalCost",
+    "AtCompletionExpenseCost",
+    "AtCompletionLaborCost",
+    "AtCompletionLaborUnits",
+    "AtCompletionMaterialCost",
+    "AtCompletionNonLaborCost",
+    "AtCompletionNonLaborUnits",
+    "AtCompletionTotalCost",
+    "Baseline1ActualExpenseCost",
+    "Baseline1ActualLaborCost",
+    "Baseline1ActualLaborUnits",
+    "Baseline1ActualMaterialCost",
+    "Baseline1ActualNonLaborCost",
+    "Baseline1ActualNonLaborUnits",
+    "Baseline1ActualTotalCost",
+    "Baseline1PlannedExpenseCost",
+    "Baseline1PlannedLaborCost",
+    "Baseline1PlannedLaborUnits",
+    "Baseline1PlannedMaterialCost",
+    "Baseline1PlannedNonLaborCost",
+    "Baseline1PlannedNonLaborUnits",
+    "Baseline1PlannedTotalCost",
+    "BaselineActualExpenseCost",
+    "BaselineActualLaborCost",
+    "BaselineActualLaborUnits",
+    "BaselineActualMaterialCost",
+    "BaselineActualNonLaborCost",
+    "BaselineActualNonLaborUnits",
+    "BaselineActualTotalCost",
+    "BaselinePlannedExpenseCost",
+    "BaselinePlannedLaborCost",
+    "BaselinePlannedLaborUnits",
+    "BaselinePlannedMaterialCost",
+    "BaselinePlannedNonLaborCost",
+    "BaselinePlannedNonLaborUnits",
+    "BaselinePlannedTotalCost",
+    "EarnedValueCost",
+    "EarnedValueLaborUnits",
+    "EstimateAtCompletionCost",
+    "EstimateAtCompletionLaborUnits",
+    "EstimateToCompleteCost",
+    "EstimateToCompleteLaborUnits",
+    "PlannedExpenseCost",
+    "PlannedLaborCost",
+    "PlannedLaborUnits",
+    "PlannedMaterialCost",
+    "PlannedNonLaborCost",
+    "PlannedNonLaborUnits",
+    "PlannedTotalCost",
+    "PlannedValueCost",
+    "PlannedValueLaborUnits",
+    "RemainingExpenseCost",
+    "RemainingLaborCost",
+    "RemainingLaborUnits",
+    "RemainingLateExpenseCost",
+    "RemainingLateLaborCost",
+    "RemainingLateLaborUnits",
+    "RemainingLateMaterialCost",
+    "RemainingLateNonLaborCost",
+    "RemainingLateNonLaborUnits",
+    "RemainingLateTotalCost",
+    "RemainingMaterialCost",
+    "RemainingNonLaborCost",
+    "RemainingNonLaborUnits",
+    "RemainingTotalCost",
+)
+# ReadResourceAssignmentSpread: coinciden con las propiedades de Period en su respuesta.
+CAMPOS_SPREAD_ASIGNACION: tuple[str, ...] = (
+    "ActualCost",
+    "ActualOvertimeCost",
+    "ActualOvertimeUnits",
+    "ActualRegularCost",
+    "ActualRegularUnits",
+    "ActualUnits",
+    "AtCompletionCost",
+    "AtCompletionUnits",
+    "PlannedCost",
+    "PlannedUnits",
+    "RemainingCost",
+    "RemainingLateCost",
+    "RemainingLateUnits",
+    "RemainingUnits",
+    "StaffedRemainingCost",
+    "StaffedRemainingLateCost",
+    "StaffedRemainingLateUnits",
+    "StaffedRemainingUnits",
+    "UnstaffedRemainingCost",
+    "UnstaffedRemainingLateCost",
+    "UnstaffedRemainingLateUnits",
+    "UnstaffedRemainingUnits",
+    "PeriodActualCost",
+    "PeriodActualUnits",
+    "PeriodAtCompletionCost",
+    "PeriodAtCompletionUnits",
+)
+
+
+def params_spread(param_ids: str, campos: tuple[str, ...]) -> tuple[ParamSpec, ...]:
+    """Parámetros de la plantilla spread.
+
+    ``param_ids`` es el nombre del param de IDs y ``campos``, los SpreadField válidos.
+    """
     return (
         ParamSpec(param_ids, ParamKind.ID_LIST, required=True),
-        ParamSpec("SpreadField", ParamKind.FIELDS, required=True),
-        ParamSpec("PeriodType", ParamKind.ENUM, required=True, default="Week", choices=PERIODOS),
-        ParamSpec("StartDate", ParamKind.DATE, required=False),
-        ParamSpec("EndDate", ParamKind.DATE, required=False),
-        ParamSpec("IncludeCumulative", ParamKind.BOOL, required=False, default="true"),
+        ParamSpec(SPREAD_FIELD, ParamKind.FIELDS, required=True, choices=campos),
+        ParamSpec(
+            PERIOD_TYPE,
+            ParamKind.ENUM,
+            required=True,
+            default=PERIODO_POR_DEFECTO,
+            choices=PERIODOS,
+        ),
+        ParamSpec(START_DATE, ParamKind.DATE, required=False),
+        ParamSpec(END_DATE, ParamKind.DATE, required=False),
+        ParamSpec(
+            INCLUDE_CUMULATIVE, ParamKind.BOOL, required=False, default="true", choices=VALORES_BOOL
+        ),
     )
 
 
@@ -169,7 +301,7 @@ CATALOGO: tuple[Endpoint, ...] = (
         doc_name="ReadActivitySpread",
         description="Spread por actividad",
         doc_verified=True,
-        params=params_spread("ActivityObjectId"),
+        params=params_spread("ActivityObjectId", CAMPOS_SPREAD_ACTIVIDAD),
     ),
     Endpoint(
         key="spread.resourceAssignment",
@@ -179,7 +311,7 @@ CATALOGO: tuple[Endpoint, ...] = (
         doc_name="ReadResourceAssignmentSpread",
         description="Spread por asignación de recurso",
         doc_verified=True,
-        params=params_spread("ResourceAssignmentObjectId"),
+        params=params_spread("ResourceAssignmentObjectId", CAMPOS_SPREAD_ASIGNACION),
     ),
 )
 
@@ -197,6 +329,32 @@ def obtener(key: str) -> Endpoint:
 def grupos() -> tuple[str, ...]:
     """Grupos del catálogo en orden de aparición."""
     return tuple(dict.fromkeys(endpoint.group for endpoint in CATALOGO))
+
+
+# --- Spread: parámetro de IDs y entidad base ----------------------------------------
+
+_SUFIJO_IDS = "ObjectId"
+
+
+def param_ids(endpoint: Endpoint) -> ParamSpec:
+    """Parámetro con la lista de ObjectId de un spread; ``NO_ES_SPREAD`` si no lo es."""
+    if endpoint.template is Plantilla.SPREAD:
+        for spec in endpoint.params:
+            if spec.kind is ParamKind.ID_LIST:
+                return spec
+    raise UsageError(MotivoUso.NO_ES_SPREAD, endpoint=endpoint.key)
+
+
+def campos_spread(endpoint: Endpoint) -> tuple[str, ...]:
+    """SpreadField válidos de un spread según la documentación de Oracle."""
+    param_ids(endpoint)
+    return next(spec.choices for spec in endpoint.params if spec.name == SPREAD_FIELD)
+
+
+def entidad_base(endpoint: Endpoint) -> Endpoint:
+    """Entidad de la que salen los IDs de un spread: ``ActivityObjectId`` → ``activity``."""
+    nombre = param_ids(endpoint).name.removesuffix(_SUFIJO_IDS)
+    return obtener(nombre[:1].lower() + nombre[1:])
 
 
 # --- Normalización de campos (§11.1, regla 4) --------------------------------------
@@ -221,3 +379,28 @@ def normalizar_campos(texto: str, param: str = FIELDS) -> tuple[str, ...]:
         if not es_campo_valido(campo):
             raise UsageError(MotivoUso.CAMPO_INVALIDO, parametro=param, campo=campo)
     return campos
+
+
+# --- Normalización de ObjectId (§11.2) ---------------------------------------------
+
+_ID_VALIDO = re.compile(r"[0-9]+")
+
+
+def ids_unicos(valores: Iterable[str]) -> tuple[int, ...]:
+    """Quita espacios, vacíos y duplicados (preservando el orden); cada ID es un entero > 0."""
+    ids: dict[int, None] = {}
+    for valor in valores:
+        texto = valor.strip()
+        if not texto:
+            continue
+        if not _ID_VALIDO.fullmatch(texto) or int(texto) == 0:
+            raise UsageError(MotivoUso.ID_INVALIDO, valor=texto[:40])
+        ids[int(texto)] = None
+    if not ids:
+        raise UsageError(MotivoUso.IDS_VACIOS)
+    return tuple(ids)
+
+
+def normalizar_ids(texto: str) -> tuple[int, ...]:
+    """Lista de ObjectId separada por comas, normalizada con ``ids_unicos``."""
+    return ids_unicos(texto.split(","))

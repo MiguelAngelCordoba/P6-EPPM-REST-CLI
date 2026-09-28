@@ -224,6 +224,47 @@ AYUDA_OPCION_MAX_ROWS = (
 )
 AYUDA_OPCION_JSON = "Imprime la respuesta completa como JSON, sin tabla."
 
+# --- Lecturas por lotes y spread (§9, §11.2, §12) -----------------------------------
+
+AYUDA_GET_ALL = (
+    "Lectura masiva por lotes: busca los ObjectId que cumplen el filtro y trae los campos en "
+    "lotes por rango de ObjectId."
+)
+AYUDA_OPCION_FILTER_LOTES = (
+    "Filtro de P6, obligatorio y sin :or:, p. ej. ProjectObjectId:eq:1234. Guía: p6 syntax filter"
+)
+AYUDA_OPCION_CHUNK = "ObjectId por lote (por defecto, id_chunk_size del perfil)."
+AYUDA_SPREAD = "Series temporales (servicio Spread) de una lista de ObjectId, pedidas en lotes."
+AYUDA_OPCION_IDS = "ObjectId separados por comas, p. ej. 4835,4845."
+AYUDA_OPCION_IDS_FROM = "Archivo CSV o JSON exportado, con una columna ObjectId."
+AYUDA_OPCION_SPREAD_FIELDS = (
+    "Campos de spread separados por comas, p. ej. PlannedLaborUnits,ActualLaborUnits. Los "
+    "válidos están en la documentación de Oracle del endpoint y en el menú, con ? en SpreadField."
+)
+AYUDA_OPCION_PERIOD = "Período: Hour, Day, Week, Month, Quarter, Year o FinancialPeriod."
+AYUDA_OPCION_START = "Fecha inicial, AAAA-MM-DD."
+AYUDA_OPCION_END = "Fecha final, AAAA-MM-DD."
+AYUDA_OPCION_NO_CUMULATIVE = "No incluye los valores acumulados (IncludeCumulative=false)."
+AYUDA_OPCION_JSON_SPREAD = "Imprime la respuesta de P6 tal cual como JSON, sin tabla."
+
+PROGRESO_LOTES = "Lotes: {hechos} de {total}"
+# Encabezado de spread: «spread.activity · 3 objetos · 36 períodos · 1,4 s».
+ENCABEZADO_SPREAD = (
+    "{endpoint} · {objetos} {unidad_objetos} · {periodos} {unidad_periodos} · {segundos} s"
+)
+UNIDAD_OBJETO = "objeto"
+UNIDAD_OBJETOS = "objetos"
+UNIDAD_PERIODO = "período"
+UNIDAD_PERIODOS = "períodos"
+AVISO_SPREAD_SIN_TABLA = (
+    "La respuesta no tiene la forma esperada (objetos con un arreglo Period): no se puede "
+    "mostrar como tabla. Usa --json para verla completa."
+)
+AVISO_SPREAD_SIN_TABLA_MENU = (
+    "La respuesta no tiene la forma esperada (objetos con un arreglo Period): no se puede "
+    "mostrar como tabla. Elige «Ver el JSON completo» para verla."
+)
+
 GRUPO_INEXISTENTE = "No existe el grupo «{grupo}». Grupos: {grupos}."
 COLUMNA_NUMERO = "#"
 # Columnas del catálogo en inglés por decisión del usuario: coinciden con la documentación.
@@ -236,6 +277,10 @@ COLUMNA_VERIFICADO = "Verificado"
 MARCA_SI = "sí"
 
 TITULO_CAMPOS = "Campos de {endpoint} ({cantidad})"
+TITULO_CAMPOS_SPREAD = (
+    "SpreadField válidos de {endpoint} ({cantidad}), según la documentación de Oracle. "
+    "Escribe uno o varios separados por comas."
+)
 
 AVISO_CLAVE_NO_GUARDADA_CONSULTA = (
     "El perfil «{nombre}» no tiene clave guardada. La que escribas se usará solo para esta "
@@ -454,7 +499,7 @@ AVISO_CLAVE_PRUEBA_MENU = (
 
 PREGUNTA_ENDPOINT = "¿Qué quieres consultar?"
 OPCION_CAMBIAR_AMBIENTE = "Cambiar ambiente"
-# Opciones que se implementan en hitos posteriores (spread en M6, exportación en M7).
+# Opciones que se implementan en hitos posteriores (exportación en M7).
 PROXIMAMENTE = "próximamente"
 
 # --- Formulario entity (§11.1) y confirmación (§11.3) -------------------------------
@@ -482,6 +527,33 @@ PREGUNTA_EJECUTAR = "¿Ejecutar?"
 OPCION_EJECUTAR = "Ejecutar"
 OPCION_EDITAR_CONSULTA = "Editar"
 OPCION_CANCELAR_CONSULTA = "Cancelar"
+
+# --- Formulario spread (§11.2) --------------------------------------------------------
+
+AYUDA_FORMULARIO_SPREAD = (
+    "Consulta la documentación de Oracle o escribe ? en SpreadField (o en el Filter de "
+    "«Desde una consulta») para ver ayuda aquí mismo.",
+)
+PREGUNTA_ORIGEN_IDS = "¿De dónde salen los ObjectId?"
+OPCION_ORIGEN_ESCRIBIR = "Escribirlos"
+OPCION_ORIGEN_ARCHIVO = "Desde un archivo exportado (CSV o JSON con columna ObjectId)"
+OPCION_ORIGEN_CONSULTA = "Desde una consulta a «{entidad}»"
+ETIQUETA_IDS = "(Obligatorio) {parametro} (separados por comas) :"
+ETIQUETA_ARCHIVO_IDS = "(Obligatorio) Archivo :"
+ETIQUETA_FILTRO_IDS = "(Obligatorio) Filter sobre {entidad} :"
+FILTRO_IDS_VACIO = "Se necesita un Filter para buscar los ObjectId."
+IDS_LEIDOS = "Se leyeron {cantidad} ObjectId de {ruta}."
+IDS_OBTENIDOS = "Se obtuvieron {cantidad} ObjectId de «{entidad}»."
+SIN_IDS = "Ningún registro de «{entidad}» cumple ese filtro."
+ETIQUETA_SPREAD_FIELD = "(Obligatorio) SpreadField :"
+PREGUNTA_PERIODO = "PeriodType"
+ETIQUETA_INICIO = "(Opcional)    StartDate (AAAA-MM-DD) :"
+ETIQUETA_FIN = "(Opcional)    EndDate (AAAA-MM-DD) :"
+CONFIRMAR_ACUMULADO = "¿Incluir los valores acumulados (IncludeCumulative)?"
+# Resumen de los IDs en la confirmación: «3 ObjectId en 1 lote».
+RESUMEN_IDS = "{cantidad} ObjectId en {lotes} {unidad}"
+UNIDAD_LOTE = "lote"
+UNIDAD_LOTES = "lotes"
 
 # --- Resultados y siguiente paso (§10.7) -------------------------------------------
 
@@ -558,8 +630,12 @@ ERRORES: dict[StrEnum, str] = {
         "No existe el endpoint «{endpoint}». Consulta la lista con `p6 endpoints`."
     ),
     MotivoUso.PLANTILLA_NO_SOPORTADA: (
-        "«{endpoint}» no es un endpoint de lectura simple (plantilla entity). Las series "
+        "«{endpoint}» no es un endpoint de lectura (plantilla entity). Las series "
         "temporales se consultan con `p6 spread`."
+    ),
+    MotivoUso.NO_ES_SPREAD: (
+        "«{endpoint}» no es un endpoint de series temporales (plantilla spread). Las lecturas "
+        "se hacen con `p6 get` o `p6 get-all`."
     ),
     MotivoUso.CAMPOS_VACIOS: "Se necesita al menos un campo en {parametro}.",
     MotivoUso.PARAMETRO_REQUERIDO: "Falta el parámetro obligatorio {parametro}.",
@@ -575,9 +651,31 @@ ERRORES: dict[StrEnum, str] = {
     MotivoUso.METODO_NO_PERMITIDO: (
         "Operación {metodo} {ruta} bloqueada: el cliente es de solo lectura."
     ),
+    MotivoUso.FILTRO_CON_OR: (
+        "La lectura por lotes no admite :or: en el filtro: la API no define paréntesis y, al "
+        "agregar el rango de ObjectId con :and:, el orden de evaluación no está garantizado. "
+        "Divide la consulta en varias sin :or:."
+    ),
+    MotivoUso.IDS_VACIOS: "Se necesita al menos un ObjectId.",
+    MotivoUso.ID_INVALIDO: "ObjectId «{valor}» no válido: debe ser un entero positivo.",
+    MotivoUso.ORIGEN_IDS: "Indica los ObjectId con --ids o con --ids-from (solo uno de los dos).",
+    MotivoUso.VALOR_NO_PERMITIDO: (
+        "Valor «{valor}» no válido en {parametro}. Opciones: {opciones}."
+    ),
+    MotivoUso.FECHA_INVALIDA: (
+        "Fecha «{valor}» no válida en {parametro}: usa AAAA-MM-DD, p. ej. 2026-01-05."
+    ),
+    MotivoUso.RANGO_FECHAS: "StartDate ({inicio}) es posterior a EndDate ({fin}).",
+    MotivoUso.ARCHIVO_IDS_EXTENSION: "El archivo «{ruta}» debe ser {extensiones}.",
+    MotivoUso.ARCHIVO_IDS_ILEGIBLE: "No se pudo leer el archivo «{ruta}» ({tipo}).",
+    MotivoUso.ARCHIVO_IDS_SIN_COLUMNA: "El archivo «{ruta}» no tiene una columna {columna}.",
     MotivoGuardarrail.SIN_FILTRO: (
         "Sin filtro se traerán todos los registros de «{endpoint}» de la instancia. Agrega "
         "--filter o, si de verdad lo necesitas, --allow-unfiltered."
+    ),
+    MotivoGuardarrail.SIN_FILTRO_LOTES: (
+        "La lectura por lotes de «{endpoint}» exige un filtro: con él se buscan los ObjectId. "
+        "Agrega --filter."
     ),
     MotivoSecreto.SIN_BACKEND: (
         "No hay un almacén de credenciales (keyring) disponible en este sistema. "

@@ -62,18 +62,30 @@ class MotivoUso(StrEnum):
 
     ENDPOINT_DESCONOCIDO = "endpoint_desconocido"
     PLANTILLA_NO_SOPORTADA = "plantilla_no_soportada"
+    NO_ES_SPREAD = "no_es_spread"
     CAMPOS_VACIOS = "campos_vacios"
     PARAMETRO_REQUERIDO = "parametro_requerido"
     PARAMETRO_DESCONOCIDO = "parametro_desconocido"
     CAMPO_INVALIDO = "campo_invalido"
     URL_DEMASIADO_LARGA = "url_demasiado_larga"
     METODO_NO_PERMITIDO = "metodo_no_permitido"
+    FILTRO_CON_OR = "filtro_con_or"
+    IDS_VACIOS = "ids_vacios"
+    ID_INVALIDO = "id_invalido"
+    ORIGEN_IDS = "origen_ids"
+    VALOR_NO_PERMITIDO = "valor_no_permitido"
+    FECHA_INVALIDA = "fecha_invalida"
+    RANGO_FECHAS = "rango_fechas"
+    ARCHIVO_IDS_EXTENSION = "archivo_ids_extension"
+    ARCHIVO_IDS_ILEGIBLE = "archivo_ids_ilegible"
+    ARCHIVO_IDS_SIN_COLUMNA = "archivo_ids_sin_columna"
 
 
 class MotivoGuardarrail(StrEnum):
     """Motivos de un bloqueo por guardarraíl."""
 
     SIN_FILTRO = "sin_filtro"
+    SIN_FILTRO_LOTES = "sin_filtro_lotes"
 
 
 class P6CliError(Exception):

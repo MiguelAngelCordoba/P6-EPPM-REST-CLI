@@ -8,7 +8,7 @@ import responses
 
 from p6cli import __version__
 from p6cli.cli import menus, messages
-from p6cli.cli.forms import Confirmacion, Decision, ModoTLS
+from p6cli.cli.forms import Confirmacion, Decision, ModoTLS, OrigenIds
 from p6cli.cli.menus import Accion
 from p6cli.core import catalog, profiles, secrets
 from p6cli.core.profiles import Profile, ProfileStore
@@ -299,7 +299,7 @@ def test_keyring_no_disponible_en_credenciales_vuelve_al_inicio(
 # --- Endpoints, consulta y resultados (§10.5 a §10.7) --------------------------------
 
 
-def test_menu_de_endpoints_agrupado_con_spread_deshabilitado(
+def test_menu_de_endpoints_agrupado_con_todo_el_catalogo_habilitado(
     http_simulado: responses.RequestsMock,
 ) -> None:
     demo = crear()
@@ -310,10 +310,9 @@ def test_menu_de_endpoints_agrupado_con_spread_deshabilitado(
     menu = guion.preguntas[-1]
     grupos = [t for t in menu.titulos() if t.startswith("── ")]
     assert grupos == [f"── {grupo} ──" for grupo in catalog.grupos()]
-    assert [e.key for e in menu.deshabilitadas()] == [
-        "spread.activity",
-        "spread.resourceAssignment",
-    ]
+    assert menu.deshabilitadas() == []
+    assert menu.elegibles()[:-2] == list(catalog.CATALOGO)
+    assert all(messages.PROXIMAMENTE not in titulo for titulo in menu.titulos())
     assert menu.elegibles()[-2:] == [Accion.CAMBIAR_AMBIENTE, Accion.SALIR]
     assert "activity" in menu.titulos()[menu.titulos().index("── Actividades ──") + 1]
 
@@ -798,3 +797,179 @@ def test_actualizar_con_error_al_guardar_sigue_conectado_sin_cambiar_el_perfil(
     assert ProfileStore().obtener("demo") == demo
     assert guion.preguntas[-1].mensaje == messages.PREGUNTA_ENDPOINT
     assert llamadas_a(http_simulado, "POST", f"{BASE}/logout") == 1
+
+
+# --- Spread (§11.2) -----------------------------------------------------------------
+
+SPREAD = catalog.obtener("spread.activity")
+RUTA_SPREAD = f"{BASE}/spread/activitySpread"
+SPREAD_OK = Simulada(200, "activity_spread_ok.json")
+
+
+def llenar_spread(
+    ids: str = "4835,4845", spread_field: str = "PlannedLaborUnits"
+) -> list[tuple[str, object]]:
+    return [
+        elegir(OrigenIds.ESCRIBIR),
+        escribir(ids),
+        escribir(spread_field),
+        elegir("Week"),
+        escribir(""),
+        escribir(""),
+        confirmar(True),
+    ]
+
+
+def test_spread_completo_con_tabla_por_periodo_y_json(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    http_simulado.add(SPREAD_OK.respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread(),
+        EJECUTAR,
+        elegir(Accion.VER_JSON),
+        SALIR,
+    )
+
+    salida = capsys.readouterr().out
+    assert "spread.activity · 2 objetos · 3 períodos · " in salida
+    assert "CumulativePlannedLaborUnits" in salida
+    assert '"ActivityId": "A1000"' in salida  # el JSON completo, tal como respondió P6
+    resultados = [p for p in guion.preguntas if p.mensaje == messages.PREGUNTA_SIGUIENTE]
+    assert resultados[0].elegibles()[0] == Accion.VER_JSON
+    assert Accion.VER_TABLA not in resultados[0].elegibles()
+    assert llamadas_a(http_simulado, "GET", RUTA_SPREAD) == 1
+    assert llamadas_a(http_simulado, "POST", f"{BASE}/logout") == 1
+
+
+def test_spread_ver_la_tabla_completa_usa_las_filas_por_periodo(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    periodos = [
+        {"StartDate": f"P{numero:02d}", "EndDate": "", "PlannedLaborUnits": numero}
+        for numero in range(30)
+    ]
+    respuesta = [{"ActivityObjectId": 4835, "Period": periodos}]
+    http_simulado.add(json_simulado(respuesta).respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread("4835"),
+        EJECUTAR,
+        elegir(Accion.VER_TABLA),
+        SALIR,
+    )
+
+    resultados = [p for p in guion.preguntas if p.mensaje == messages.PREGUNTA_SIGUIENTE]
+    assert resultados[0].titulos()[0] == "Ver la tabla completa (30 filas)"
+    salida = capsys.readouterr().out
+    assert "Mostrando 25 de 30 filas." in salida
+    assert salida.count("P29") == 1
+    assert salida.count("P24") == 2
+
+
+def test_spread_error_de_p6_reaparece_el_formulario_con_lo_escrito(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    error = json_simulado({"message": "Invalid SpreadField Unidades"}, 400)
+    http_simulado.add(error.respuesta("GET", RUTA_SPREAD))
+    http_simulado.add(SPREAD_OK.respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread(spread_field="Unidades"),
+        EJECUTAR,
+        *llenar_spread(),
+        EJECUTAR,
+        SALIR,
+    )
+
+    salida = capsys.readouterr()
+    assert "Invalid SpreadField Unidades" in salida.err
+    assert messages.PISTAS_HTTP[400] in salida.err
+    textos = guion.de_tipo("text")
+    assert [t.por_defecto for t in textos[4:6]] == ["4835,4845", "Unidades"]
+    assert llamadas_a(http_simulado, "POST", f"{BASE}/login") == 1
+
+
+def test_spread_nueva_consulta_conserva_los_valores(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    http_simulado.add(SPREAD_OK.respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread(),
+        EJECUTAR,
+        elegir(Accion.NUEVA_CONSULTA),
+        *llenar_spread(),
+        EJECUTAR,
+        elegir(Accion.OTRO_ENDPOINT),
+        SALIR,
+    )
+
+    textos = guion.de_tipo("text")
+    assert [t.por_defecto for t in textos[4:]] == ["4835,4845", "PlannedLaborUnits", "", ""]
+    assert guion.preguntas[-1].mensaje == messages.PREGUNTA_ENDPOINT
+    assert llamadas_a(http_simulado, "GET", RUTA_SPREAD) == 2
+
+
+def test_spread_forma_inesperada_avisa_y_ofrece_el_json(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    http_simulado.add(json_simulado([{"Otra": "forma"}]).respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread("4835"),
+        EJECUTAR,
+        elegir(Accion.VER_JSON),
+        SALIR,
+    )
+
+    salida = capsys.readouterr()
+    assert messages.AVISO_SPREAD_SIN_TABLA_MENU in salida.err
+    assert '"Otra": "forma"' in salida.out
+    resultados = [p for p in guion.preguntas if p.mensaje == messages.PREGUNTA_SIGUIENTE]
+    assert Accion.VER_JSON in resultados[0].elegibles()
+
+
+def test_spread_cancelar_vuelve_al_menu_de_endpoints(
+    http_simulado: responses.RequestsMock,
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread(),
+        elegir(Confirmacion.CANCELAR),
+        SALIR,
+    )
+
+    assert guion.preguntas[-1].mensaje == messages.PREGUNTA_ENDPOINT
+    assert llamadas_a(http_simulado, "GET", RUTA_SPREAD) == 0

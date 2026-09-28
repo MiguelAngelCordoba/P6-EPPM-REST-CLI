@@ -1,11 +1,11 @@
-"""Formularios: asistente de perfil (§10.3) y parámetros de la plantilla ``entity`` (§11).
+"""Formularios: asistente de perfil (§10.3) y parámetros de las plantillas (§11).
 
 Todo se pregunta con un ``Prompter``: los menús usan listas con flechas y los comandos
 ``p6 profiles add/edit`` preguntas de texto, con la misma lógica.
 """
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,10 +17,27 @@ from rich.text import Text
 from p6cli.cli import messages, render
 from p6cli.cli.prompter import Opcion, Prompter
 from p6cli.core import profiles, secrets
-from p6cli.core.catalog import FIELDS, FILTER, ORDER_BY, Endpoint
-from p6cli.core.client import Cliente, validar_consulta
+from p6cli.core.catalog import (
+    END_DATE,
+    FIELDS,
+    FILTER,
+    INCLUDE_CUMULATIVE,
+    ORDER_BY,
+    PERIOD_TYPE,
+    PERIODO_POR_DEFECTO,
+    PERIODOS,
+    SPREAD_FIELD,
+    START_DATE,
+    Endpoint,
+    campos_spread,
+    entidad_base,
+    normalizar_ids,
+    param_ids,
+)
+from p6cli.core.client import Cliente, validar_consulta, validar_spread
 from p6cli.core.diagnostics import DiagnosticReport, EstadoDiagnostico, probar_conexion
 from p6cli.core.errors import ConfigError, MotivoPerfil, P6CliError, ProfileError, UsageError
+from p6cli.core.export import leer_ids
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.urls import AdvertenciaUrl, normalizar_url
 
@@ -416,6 +433,255 @@ def formulario_entity(
             continue
         consulta = ConsultaEntity(endpoint, valores, enviada, allow_unfiltered=sin_filtro)
         _mostrar_confirmacion(perfil, consulta)
+        eleccion = prompter.select(messages.PREGUNTA_EJECUTAR, OPCIONES_CONFIRMACION)
+        if eleccion is Confirmacion.EJECUTAR:
+            return consulta
+        if eleccion is Confirmacion.CANCELAR:
+            return None
+
+
+# --- Formulario spread (§11.2 y §11.3) --------------------------------------------
+
+
+class OrigenIds(Enum):
+    """De dónde salen los ObjectId de un spread (§11.2, regla 1)."""
+
+    ESCRIBIR = "escribir"
+    ARCHIVO = "archivo"
+    CONSULTA = "consulta"
+
+
+@dataclass(frozen=True)
+class ValoresSpread:
+    """Lo que el usuario escribió en el formulario spread, tal cual.
+
+    Se conserva lo escrito en cada origen, para que «Editar» y «Nueva consulta» lo ofrezcan.
+    """
+
+    origen: OrigenIds = OrigenIds.ESCRIBIR
+    ids: str = ""
+    archivo: str = ""
+    filtro: str = ""
+    spread_field: str = ""
+    periodo: str = PERIODO_POR_DEFECTO
+    inicio: str = ""
+    fin: str = ""
+    acumulado: bool = True
+
+
+@dataclass(frozen=True)
+class ConsultaSpread:
+    """Consulta confirmada: lo escrito, los ObjectId y la consulta de cada lote."""
+
+    endpoint: Endpoint
+    valores: ValoresSpread
+    ids: tuple[int, ...]
+    lotes: Sequence[Mapping[str, str]]
+
+    def params(self) -> dict[str, str]:
+        """Parámetros para ``Cliente.get_spread``."""
+        return _params_spread(self.endpoint, self.valores, self.ids)
+
+    @property
+    def campos(self) -> list[str]:
+        """SpreadField normalizados, en el orden en que se escribieron."""
+        return self.lotes[0][SPREAD_FIELD].split(",")
+
+
+def _params_spread(
+    endpoint: Endpoint, valores: ValoresSpread, ids: Sequence[int]
+) -> dict[str, str]:
+    return {
+        param_ids(endpoint).name: ",".join(str(numero) for numero in ids),
+        SPREAD_FIELD: valores.spread_field,
+        PERIOD_TYPE: valores.periodo,
+        START_DATE: valores.inicio,
+        END_DATE: valores.fin,
+        INCLUDE_CUMULATIVE: "true" if valores.acumulado else "false",
+    }
+
+
+def _opciones_origen(entidad: Endpoint) -> tuple[Opcion[OrigenIds], ...]:
+    return (
+        Opcion(messages.OPCION_ORIGEN_ESCRIBIR, OrigenIds.ESCRIBIR),
+        Opcion(messages.OPCION_ORIGEN_ARCHIVO, OrigenIds.ARCHIVO),
+        Opcion(messages.OPCION_ORIGEN_CONSULTA.format(entidad=entidad.key), OrigenIds.CONSULTA),
+    )
+
+
+def _ids_de_consulta(
+    prompter: Prompter,
+    cliente: Cliente,
+    entidad: Endpoint,
+    valores: ValoresSpread,
+    sondeos: dict[str, tuple[int, ...]],
+) -> tuple[ValoresSpread, tuple[int, ...] | None]:
+    """Pide un Filter sobre la entidad base y busca sus ObjectId (una petición).
+
+    ``sondeos`` guarda los IDs ya obtenidos por filtro: si el formulario reaparece con el
+    mismo filtro, no se vuelve a consultar a P6. Devuelve ``None`` si no hay IDs que usar.
+    """
+    filtro = _pedir_con_ayuda(
+        prompter,
+        messages.ETIQUETA_FILTRO_IDS.format(entidad=entidad.key),
+        valores.filtro,
+        lambda: _mostrar_guia("filter"),
+    )
+    valores = dataclasses.replace(valores, filtro=filtro)
+    if not filtro.strip():
+        typer.echo(messages.FILTRO_IDS_VACIO, err=True)
+        return valores, None
+    if filtro not in sondeos:
+        with render.progreso_consulta():
+            sondeos[filtro] = tuple(cliente.ids(entidad, filtro))
+    ids = sondeos[filtro]
+    if not ids:
+        typer.echo(messages.SIN_IDS.format(entidad=entidad.key), err=True)
+        return valores, None
+    typer.echo(messages.IDS_OBTENIDOS.format(cantidad=render.numero(len(ids)), entidad=entidad.key))
+    return valores, ids
+
+
+def _pedir_ids(
+    prompter: Prompter,
+    cliente: Cliente,
+    endpoint: Endpoint,
+    valores: ValoresSpread,
+    sondeos: dict[str, tuple[int, ...]],
+) -> tuple[ValoresSpread, tuple[int, ...]]:
+    """Regla 1: origen de los ObjectId. Ante un error se muestra y se vuelve a elegir origen."""
+    entidad = entidad_base(endpoint)
+    while True:
+        origen = prompter.select(
+            messages.PREGUNTA_ORIGEN_IDS, _opciones_origen(entidad), valores.origen
+        )
+        valores = dataclasses.replace(valores, origen=origen)
+        ids: tuple[int, ...] | None
+        try:
+            if origen is OrigenIds.ESCRIBIR:
+                etiqueta = messages.ETIQUETA_IDS.format(parametro=param_ids(endpoint).name)
+                texto = prompter.text(etiqueta, valores.ids)
+                valores = dataclasses.replace(valores, ids=texto)
+                ids = normalizar_ids(texto)
+            elif origen is OrigenIds.ARCHIVO:
+                ruta = pedir_texto(prompter, messages.ETIQUETA_ARCHIVO_IDS, valores.archivo)
+                valores = dataclasses.replace(valores, archivo=ruta)
+                ids = leer_ids(Path(ruta).expanduser())
+                cantidad = render.numero(len(ids))
+                typer.echo(messages.IDS_LEIDOS.format(cantidad=cantidad, ruta=ruta))
+            else:
+                valores, ids = _ids_de_consulta(prompter, cliente, entidad, valores, sondeos)
+        except P6CliError as error:
+            render.mostrar_error(error)
+            continue
+        if ids is not None:
+            return valores, ids
+
+
+def _mostrar_campos_spread(endpoint: Endpoint) -> None:
+    """? en SpreadField: los valores válidos del catálogo (documentación de Oracle), sin red."""
+    render.lista_campos(endpoint.key, campos_spread(endpoint), messages.TITULO_CAMPOS_SPREAD)
+
+
+def _pedir_valores_spread(
+    prompter: Prompter, endpoint: Endpoint, valores: ValoresSpread
+) -> ValoresSpread:
+    """Reglas 2 a 5: SpreadField (con ? lista los válidos), PeriodType, fechas e
+    IncludeCumulative."""
+    spread_field = _pedir_con_ayuda(
+        prompter,
+        messages.ETIQUETA_SPREAD_FIELD,
+        valores.spread_field,
+        lambda: _mostrar_campos_spread(endpoint),
+    )
+    periodo = prompter.select(
+        messages.PREGUNTA_PERIODO, [Opcion(p, p) for p in PERIODOS], valores.periodo
+    )
+    inicio = prompter.text(messages.ETIQUETA_INICIO, valores.inicio)
+    fin = prompter.text(messages.ETIQUETA_FIN, valores.fin)
+    acumulado = prompter.confirm(messages.CONFIRMAR_ACUMULADO, por_defecto=valores.acumulado)
+    return dataclasses.replace(
+        valores,
+        spread_field=spread_field,
+        periodo=periodo,
+        inicio=inicio,
+        fin=fin,
+        acumulado=acumulado,
+    )
+
+
+def comando_equivalente_spread(perfil: str, consulta: ConsultaSpread) -> str:
+    """Comando ``p6 spread`` que repite la consulta en modo flags (§11.3).
+
+    Los IDs escritos o buscados van en ``--ids`` (la lista que se envía); los de un archivo,
+    en ``--ids-from``. Los demás flags solo aparecen si difieren del valor por defecto.
+    """
+    valores = consulta.valores
+    primero = consulta.lotes[0]
+    partes = ["p6", "spread", consulta.endpoint.key, "--env", perfil]
+    if valores.origen is OrigenIds.ARCHIVO:
+        partes += ["--ids-from", _entre_comillas(valores.archivo)]
+    else:
+        partes += ["--ids", _entre_comillas(",".join(str(numero) for numero in consulta.ids))]
+    partes += ["--spread-fields", _entre_comillas(primero[SPREAD_FIELD])]
+    if primero[PERIOD_TYPE] != PERIODO_POR_DEFECTO:
+        partes += ["--period", primero[PERIOD_TYPE]]
+    if valores.inicio.strip():
+        partes += ["--start", valores.inicio.strip()]
+    if valores.fin.strip():
+        partes += ["--end", valores.fin.strip()]
+    if not valores.acumulado:
+        partes.append("--no-cumulative")
+    return " ".join(partes)
+
+
+def _mostrar_confirmacion_spread(perfil: Profile, consulta: ConsultaSpread) -> None:
+    primero = consulta.lotes[0]
+    lotes = len(consulta.lotes)
+    resumen_ids = messages.RESUMEN_IDS.format(
+        cantidad=render.numero(len(consulta.ids)),
+        lotes=render.numero(lotes),
+        unidad=messages.UNIDAD_LOTE if lotes == 1 else messages.UNIDAD_LOTES,
+    )
+    parametros = [
+        (param_ids(consulta.endpoint).name, resumen_ids, False),
+        (SPREAD_FIELD, ", ".join(consulta.campos), False),
+        (PERIOD_TYPE, primero[PERIOD_TYPE], primero[PERIOD_TYPE] == PERIODO_POR_DEFECTO),
+    ]
+    for fecha in (START_DATE, END_DATE):
+        if fecha in primero:
+            parametros.append((fecha, primero[fecha], False))
+    parametros.append((INCLUDE_CUMULATIVE, primero[INCLUDE_CUMULATIVE], consulta.valores.acumulado))
+    render.confirmacion_consulta(
+        consulta.endpoint.path, parametros, comando_equivalente_spread(perfil.name, consulta)
+    )
+
+
+def formulario_spread(
+    prompter: Prompter,
+    cliente: Cliente,
+    perfil: Profile,
+    endpoint: Endpoint,
+    valores: ValoresSpread,
+) -> ConsultaSpread | None:
+    """Formulario de §11.2 con la confirmación de §11.3; ``None`` si se cancela.
+
+    ``valores`` es lo escrito antes. Todo se valida antes de la confirmación (IDs, campos,
+    fechas y largo de la URL de cada lote); si algo no es válido, el formulario reaparece
+    con lo escrito. Solo el origen «Desde una consulta» toca P6, y una vez por filtro.
+    """
+    sondeos: dict[str, tuple[int, ...]] = {}
+    while True:
+        render.cabecera_formulario(endpoint, messages.AYUDA_FORMULARIO_SPREAD)
+        valores, ids = _pedir_ids(prompter, cliente, endpoint, valores, sondeos)
+        valores = _pedir_valores_spread(prompter, endpoint, valores)
+        try:
+            lotes = validar_spread(perfil, endpoint, _params_spread(endpoint, valores, ids))
+        except UsageError as error:
+            render.mostrar_error(error)
+            continue
+        consulta = ConsultaSpread(endpoint, valores, ids, lotes)
+        _mostrar_confirmacion_spread(perfil, consulta)
         eleccion = prompter.select(messages.PREGUNTA_EJECUTAR, OPCIONES_CONFIRMACION)
         if eleccion is Confirmacion.EJECUTAR:
             return consulta

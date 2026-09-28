@@ -100,6 +100,8 @@ La documentación de Oracle declara el schema como `string`. Un cliente que haga
 - **Summarized** (EPS, proyecto, WBS, recursos y roles de proyecto): depende de la última corrida del Summarizer.
 - Exige **listas explícitas de ObjectId** (`ActivityObjectId=1,2,3`). No acepta "todo el proyecto": hay que obtener los IDs antes y trocearlos, cuidando el largo de la URL.
 - Parámetros: `PeriodType` (Hour, Day, Week, Month, Quarter, Year, FinancialPeriod), `StartDate`, `EndDate`, `IncludeCumulative`, `SpreadField`.
+- `PeriodType=Week` funciona aunque el ejemplo de la documentación use `WEEK`, y las fechas `AAAA-MM-DDT00:00:00` se aceptan.
+- P6 no tiene `/fields` para spread. Los `SpreadField` válidos solo están en la página de cada operación y **cambian según el endpoint**: la de actividad usa `PlannedLaborUnits`, `ActualLaborCost`...; la de asignación de recurso, `PlannedUnits`, `ActualRegularUnits`... Con `IncludeCumulative=true` cada campo trae además su `Cumulative<campo>`.
 
 ## 11. Permisos enmascarados
 

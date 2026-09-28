@@ -9,16 +9,17 @@ así que el logout ocurre al cambiar de ambiente, al salir y también ante Ctrl+
 import dataclasses
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import Enum
 
 import typer
 
 from p6cli.cli import forms, messages, render
-from p6cli.cli.forms import ValoresEntity
+from p6cli.cli.forms import ValoresEntity, ValoresSpread
 from p6cli.cli.prompter import Opcion, Prompter, Separador
 from p6cli.core import catalog, profiles, secrets
 from p6cli.core.catalog import Endpoint, Plantilla
-from p6cli.core.client import Cliente, Fila
+from p6cli.core.client import Cliente, Fila, filas_por_periodo
 from p6cli.core.diagnostics import EstadoDiagnostico, diagnosticar
 from p6cli.core.errors import P6CliError
 from p6cli.core.profiles import Profile, ProfileStore
@@ -288,23 +289,16 @@ def _credenciales(prompter: Prompter, store: ProfileStore, perfil: Profile) -> S
 
 
 def _elegir_endpoint(prompter: Prompter) -> Endpoint | Accion:
-    """Catálogo agrupado; spread queda deshabilitado hasta M6."""
+    """Catálogo agrupado (§10.5)."""
     ancho = max(len(endpoint.key) for endpoint in catalog.CATALOGO)
     opciones: list[Opcion[Endpoint | Accion] | Separador] = []
     for grupo in catalog.grupos():
         opciones.append(Separador(messages.TITULO_GRUPO.format(grupo=grupo)))
-        for endpoint in catalog.CATALOGO:
-            if endpoint.group != grupo:
-                continue
-            opciones.append(
-                Opcion(
-                    f"{endpoint.key:<{ancho}}   {endpoint.description}",
-                    endpoint,
-                    deshabilitada=(
-                        None if endpoint.template is Plantilla.ENTITY else messages.PROXIMAMENTE
-                    ),
-                )
-            )
+        opciones += [
+            Opcion(f"{endpoint.key:<{ancho}}   {endpoint.description}", endpoint)
+            for endpoint in catalog.CATALOGO
+            if endpoint.group == grupo
+        ]
     opciones += [
         Separador(),
         Opcion(messages.OPCION_CAMBIAR_AMBIENTE, Accion.CAMBIAR_AMBIENTE),
@@ -320,15 +314,33 @@ def _consultar(prompter: Prompter, sesion: Sesion) -> Accion:
         eleccion = _elegir_endpoint(prompter)
         if isinstance(eleccion, Accion):
             return eleccion
-        accion = _consultar_endpoint(prompter, cliente, sesion.perfil, eleccion)
+        if eleccion.template is Plantilla.SPREAD:
+            accion = _consultar_spread(prompter, cliente, sesion.perfil, eleccion)
+        else:
+            accion = _consultar_entity(prompter, cliente, sesion.perfil, eleccion)
         if accion is not Accion.OTRO_ENDPOINT:
             return accion
 
 
-def _consultar_endpoint(
+@dataclass(frozen=True)
+class Resultado:
+    """Lo recibido de P6 y cómo se muestra.
+
+    ``tabla`` y ``columnas`` son las filas de la tabla; ``respuesta`` es lo que devolvió P6,
+    para «Ver el JSON completo». En ``entity`` son lo mismo; en spread, la tabla tiene una
+    fila por objeto y período.
+    """
+
+    tabla: Sequence[Fila]
+    columnas: Sequence[str]
+    respuesta: Sequence[Fila]
+    encabezado: str
+
+
+def _consultar_entity(
     prompter: Prompter, cliente: Cliente, perfil: Profile, endpoint: Endpoint
 ) -> Accion:
-    """Formulario, ejecución, resultados y siguiente paso para un endpoint."""
+    """Formulario, ejecución, resultados y siguiente paso para un endpoint ``entity``."""
     valores = ValoresEntity()
     while True:
         consulta = forms.formulario_entity(prompter, cliente, perfil, endpoint, valores)
@@ -347,29 +359,76 @@ def _consultar_endpoint(
             continue
         segundos = time.perf_counter() - inicio
         encabezado = render.encabezado_resultados(endpoint.key, len(filas), segundos)
-        render.tabla_resultados(
-            filas,
-            consulta.campos,
-            render.FILAS_TABLA,
-            encabezado,
-            aviso=messages.AVISO_FILAS_MOSTRADAS_MENU,
-        )
-        # Ver la salida completa usa las filas ya recibidas y vuelve a este mismo menú.
-        while (
-            siguiente := prompter.select(messages.PREGUNTA_SIGUIENTE, _opciones_siguiente(filas))
-        ) in (Accion.VER_TABLA, Accion.VER_JSON):
-            _ver_completo(prompter, siguiente, filas, consulta.campos, encabezado)
+        resultado = Resultado(filas, consulta.campos, filas, encabezado)
+        _mostrar_tabla(resultado)
+        siguiente = _siguiente_paso(prompter, resultado)
         if siguiente is not Accion.NUEVA_CONSULTA:
             return siguiente
 
 
-def _opciones_siguiente(filas: Sequence[Fila]) -> tuple[Opcion[Accion], ...]:
-    """Opciones de «¿Qué sigue?» (§10.7) según la cantidad de filas recibidas."""
+def _consultar_spread(
+    prompter: Prompter, cliente: Cliente, perfil: Profile, endpoint: Endpoint
+) -> Accion:
+    """Formulario, ejecución por lotes, resultados y siguiente paso para un spread (§11.2)."""
+    valores = ValoresSpread()
+    while True:
+        consulta = forms.formulario_spread(prompter, cliente, perfil, endpoint, valores)
+        if consulta is None:
+            return Accion.OTRO_ENDPOINT
+        valores = consulta.valores
+        inicio = time.perf_counter()
+        try:
+            with render.progreso_lotes() as avisar:
+                respuesta = cliente.get_spread(endpoint, consulta.params(), on_progress=avisar)
+        except P6CliError as error:
+            # Regla 7: se muestra el error y el formulario reaparece con lo escrito.
+            render.mostrar_error(error)
+            continue
+        segundos = time.perf_counter() - inicio
+        tabla = filas_por_periodo(respuesta, endpoint, consulta.campos)
+        if tabla is None:
+            encabezado = render.encabezado_resultados(endpoint.key, len(respuesta), segundos)
+            resultado = Resultado([], [], respuesta, encabezado)
+            render.aviso_sin_tabla(encabezado, messages.AVISO_SPREAD_SIN_TABLA_MENU)
+        else:
+            columnas, filas = tabla
+            encabezado = render.encabezado_spread(
+                endpoint.key, len(respuesta), len(filas), segundos
+            )
+            resultado = Resultado(filas, columnas, respuesta, encabezado)
+            _mostrar_tabla(resultado)
+        siguiente = _siguiente_paso(prompter, resultado)
+        if siguiente is not Accion.NUEVA_CONSULTA:
+            return siguiente
+
+
+def _mostrar_tabla(resultado: Resultado) -> None:
+    """Las primeras filas de la tabla, con el aviso del menú si no caben todas."""
+    render.tabla_resultados(
+        resultado.tabla,
+        resultado.columnas,
+        render.FILAS_TABLA,
+        resultado.encabezado,
+        aviso=messages.AVISO_FILAS_MOSTRADAS_MENU,
+    )
+
+
+def _siguiente_paso(prompter: Prompter, resultado: Resultado) -> Accion:
+    """«¿Qué sigue?» (§10.7). Ver la salida completa usa lo ya recibido y vuelve aquí."""
+    while (
+        siguiente := prompter.select(messages.PREGUNTA_SIGUIENTE, _opciones_siguiente(resultado))
+    ) in (Accion.VER_TABLA, Accion.VER_JSON):
+        _ver_completo(prompter, siguiente, resultado)
+    return siguiente
+
+
+def _opciones_siguiente(resultado: Resultado) -> tuple[Opcion[Accion], ...]:
+    """Opciones de «¿Qué sigue?» (§10.7) según lo recibido."""
     opciones: list[Opcion[Accion]] = []
-    if len(filas) > render.FILAS_TABLA:
-        titulo = messages.OPCION_VER_TABLA.format(filas=render.numero(len(filas)))
+    if len(resultado.tabla) > render.FILAS_TABLA:
+        titulo = messages.OPCION_VER_TABLA.format(filas=render.numero(len(resultado.tabla)))
         opciones.append(Opcion(titulo, Accion.VER_TABLA))
-    if filas:
+    if resultado.respuesta:
         opciones.append(Opcion(messages.OPCION_VER_JSON, Accion.VER_JSON))
     return (
         *opciones,
@@ -387,19 +446,14 @@ def _opciones_siguiente(filas: Sequence[Fila]) -> tuple[Opcion[Accion], ...]:
     )
 
 
-def _ver_completo(
-    prompter: Prompter,
-    accion: Accion,
-    filas: Sequence[Fila],
-    campos: Sequence[str],
-    encabezado: str,
-) -> None:
-    """Tabla o JSON con todas las filas; con muchas filas, pide confirmar (por defecto, no)."""
+def _ver_completo(prompter: Prompter, accion: Accion, resultado: Resultado) -> None:
+    """Tabla o JSON completos; con muchas filas, pide confirmar (por defecto, no)."""
+    filas = resultado.tabla if accion is Accion.VER_TABLA else resultado.respuesta
     if len(filas) > FILAS_AVISO_SALIDA_COMPLETA:
         pregunta = messages.CONFIRMAR_SALIDA_COMPLETA.format(filas=render.numero(len(filas)))
         if not prompter.confirm(pregunta, por_defecto=False):
             return
     if accion is Accion.VER_TABLA:
-        render.tabla_resultados(filas, campos, 0, encabezado)
+        render.tabla_resultados(filas, resultado.columnas, 0, resultado.encabezado)
     else:
         render.json_resultados(filas)
