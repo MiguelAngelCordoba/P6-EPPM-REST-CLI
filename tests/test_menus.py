@@ -1,6 +1,9 @@
 """Flujo interactivo (§10): transiciones con un Prompter guionizado y HTTP simulado."""
 
 import json
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
 
 import keyring
 import pytest
@@ -312,7 +315,6 @@ def test_menu_de_endpoints_agrupado_con_todo_el_catalogo_habilitado(
     assert grupos == [f"── {grupo} ──" for grupo in catalog.grupos()]
     assert menu.deshabilitadas() == []
     assert menu.elegibles()[:-2] == list(catalog.CATALOGO)
-    assert all(messages.PROXIMAMENTE not in titulo for titulo in menu.titulos())
     assert menu.elegibles()[-2:] == [Accion.CAMBIAR_AMBIENTE, Accion.SALIR]
     assert "activity" in menu.titulos()[menu.titulos().index("── Actividades ──") + 1]
 
@@ -341,7 +343,7 @@ def test_consulta_completa_muestra_resultados_y_nueva_consulta_conserva_los_para
     assert f"activity · {FILAS_ACTIVIDADES} filas ·" in salida.out
     assert "A1010" in salida.out
     resultados = [p for p in guion.preguntas if p.mensaje == messages.PREGUNTA_SIGUIENTE]
-    assert resultados[0].deshabilitadas() == [Accion.EXPORTAR_CSV, Accion.EXPORTAR_JSON]
+    assert resultados[0].deshabilitadas() == []
     textos = guion.de_tipo("text")
     assert [t.por_defecto for t in textos[3:]] == ["ObjectId,Id,Name", FILTRO, ""]
     assert guion.preguntas[-1].mensaje == messages.PREGUNTA_ENDPOINT
@@ -486,6 +488,137 @@ def test_ver_tabla_y_json_seguidos_sin_repetir_la_consulta(
     assert guion.preguntas[-1].mensaje == messages.PREGUNTA_ENDPOINT
     assert llamadas_a(http_simulado, "GET", f"{BASE}/project") == 1
     assert llamadas_a(http_simulado, "POST", f"{BASE}/login") == 1
+
+
+# --- Exportar (§10.7 y §13) -----------------------------------------------------------
+
+AHORA = datetime(2026, 9, 28, 10, 15, 0)
+NOMBRE_CSV = "demo_project_20260928-101500.csv"
+DE_ACUERDO = elegir(Accion.DE_ACUERDO)
+CAMBIAR_RUTA = elegir(Accion.CAMBIAR_RUTA)
+
+
+@pytest.fixture
+def en_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Directorio de trabajo temporal (``./exports``) y reloj fijo para el nombre del archivo."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(menus, "datetime", SimpleNamespace(now=lambda: AHORA))
+    return Path.cwd()
+
+
+def preguntas_ruta(guion: PrompterGuion) -> list[Pregunta]:
+    return [
+        p
+        for p in guion.de_tipo("select")
+        if p.elegibles() == [Accion.DE_ACUERDO, Accion.CAMBIAR_RUTA]
+    ]
+
+
+def test_exportar_csv_de_acuerdo_con_la_ruta_completa_y_vuelve_al_menu(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str], en_tmp: Path
+) -> None:
+    inicio = consultar_proyectos(http_simulado, TREINTA_FILAS)
+    ruta = en_tmp / "exports" / NOMBRE_CSV
+
+    guion = ejecutar(*inicio, elegir(Accion.EXPORTAR_CSV), DE_ACUERDO, SALIR)
+
+    [pregunta] = preguntas_ruta(guion)
+    assert pregunta.mensaje == messages.PREGUNTA_RUTA_EXPORTAR.format(ruta=ruta)
+    assert pregunta.titulos() == [messages.OPCION_DE_ACUERDO, messages.OPCION_CAMBIAR_RUTA]
+    lineas = ruta.read_text(encoding="utf-8-sig").splitlines()
+    assert lineas[0] == "ObjectId,Id"
+    assert lineas[-1] == "1030,P29"  # todas las filas, no solo las 25 de la tabla
+    salida = capsys.readouterr().out
+    assert messages.EXPORTADO.format(ruta=ruta, cantidad="30", unidad="filas") in salida
+    assert len(menus_siguiente(guion)) == 2
+    assert llamadas_a(http_simulado, "GET", f"{BASE}/project") == 1
+
+
+def test_exportar_json_cambiando_la_carpeta_conserva_el_nombre(
+    http_simulado: responses.RequestsMock, en_tmp: Path
+) -> None:
+    inicio = consultar_proyectos(http_simulado, TREINTA_FILAS)
+    carpeta = en_tmp / "otra carpeta" / "p6"
+
+    guion = ejecutar(
+        *inicio,
+        elegir(Accion.EXPORTAR_JSON),
+        CAMBIAR_RUTA,
+        escribir(f"  {carpeta}  "),
+        DE_ACUERDO,
+        SALIR,
+    )
+
+    pedir = guion.de_tipo("text")[-1]
+    assert pedir.mensaje == messages.ETIQUETA_CARPETA_EXPORTAR
+    assert pedir.por_defecto == str(en_tmp / "exports")
+    ruta = carpeta / "demo_project_20260928-101500.json"
+    rutas = [p.mensaje for p in preguntas_ruta(guion)]
+    assert rutas[-1] == messages.PREGUNTA_RUTA_EXPORTAR.format(ruta=ruta)
+    assert json.loads(ruta.read_text(encoding="utf-8")) == TREINTA_FILAS
+    assert not (en_tmp / "exports").exists()
+
+
+def test_cambiar_ruta_exige_una_ruta_completa(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str], en_tmp: Path
+) -> None:
+    inicio = consultar_proyectos(http_simulado, TREINTA_FILAS)
+    carpeta = en_tmp / "destino"
+
+    guion = ejecutar(
+        *inicio,
+        elegir(Accion.EXPORTAR_CSV),
+        CAMBIAR_RUTA,
+        escribir("relativa"),
+        escribir(str(carpeta)),
+        DE_ACUERDO,
+        SALIR,
+    )
+
+    assert messages.CARPETA_NO_COMPLETA in capsys.readouterr().err
+    assert [t.por_defecto for t in guion.de_tipo("text")[-2:]] == [str(en_tmp / "exports")] * 2
+    assert (carpeta / NOMBRE_CSV).exists()
+    assert not (en_tmp / "relativa").exists()
+
+
+def test_exportar_dos_veces_el_mismo_nombre_agrega_sufijo(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str], en_tmp: Path
+) -> None:
+    inicio = consultar_proyectos(http_simulado, TREINTA_FILAS)
+
+    ejecutar(
+        *inicio,
+        elegir(Accion.EXPORTAR_CSV),
+        DE_ACUERDO,
+        elegir(Accion.EXPORTAR_CSV),
+        DE_ACUERDO,
+        SALIR,
+    )
+
+    segunda = en_tmp / "exports" / "demo_project_20260928-101500_2.csv"
+    assert segunda.exists()
+    salida = capsys.readouterr().out
+    assert messages.EXPORTADO.format(ruta=segunda, cantidad="30", unidad="filas") in salida
+
+
+def test_error_al_exportar_se_muestra_y_vuelve_al_menu(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str], en_tmp: Path
+) -> None:
+    (en_tmp / "archivo").write_text("", encoding="utf-8")
+    inicio = consultar_proyectos(http_simulado, TREINTA_FILAS)
+
+    guion = ejecutar(
+        *inicio,
+        elegir(Accion.EXPORTAR_CSV),
+        CAMBIAR_RUTA,
+        escribir(str(en_tmp / "archivo")),
+        DE_ACUERDO,
+        SALIR,
+    )
+
+    assert "No se pudo escribir el archivo" in capsys.readouterr().err
+    assert len(menus_siguiente(guion)) == 2
+    assert sorted(p.name for p in en_tmp.iterdir()) == ["archivo", "config"]
 
 
 def test_error_de_p6_muestra_pista_y_el_formulario_reaparece_con_lo_escrito(
@@ -954,6 +1087,46 @@ def test_spread_forma_inesperada_avisa_y_ofrece_el_json(
     assert '"Otra": "forma"' in salida.out
     resultados = [p for p in guion.preguntas if p.mensaje == messages.PREGUNTA_SIGUIENTE]
     assert Accion.VER_JSON in resultados[0].elegibles()
+    # Solo se puede exportar tal cual, en JSON.
+    assert resultados[0].deshabilitadas() == [Accion.EXPORTAR_CSV]
+    assert Accion.EXPORTAR_JSON in resultados[0].elegibles()
+
+
+def test_spread_exportar_csv_en_formato_largo_y_json_tal_cual(
+    http_simulado: responses.RequestsMock, capsys: pytest.CaptureFixture[str], en_tmp: Path
+) -> None:
+    demo = crear()
+    registrar_p6(http_simulado)
+    http_simulado.add(SPREAD_OK.respuesta("GET", RUTA_SPREAD))
+
+    guion = ejecutar(
+        elegir(demo),
+        CONTINUAR,
+        elegir(SPREAD),
+        *llenar_spread(),
+        EJECUTAR,
+        elegir(Accion.EXPORTAR_CSV),
+        DE_ACUERDO,
+        elegir(Accion.EXPORTAR_JSON),
+        DE_ACUERDO,
+        SALIR,
+    )
+
+    csv_ = en_tmp / "exports" / "demo_spread.activity_20260928-101500.csv"
+    json_ = en_tmp / "exports" / "demo_spread.activity_20260928-101500.json"
+    assert [p.mensaje for p in preguntas_ruta(guion)] == [
+        messages.PREGUNTA_RUTA_EXPORTAR.format(ruta=csv_),
+        messages.PREGUNTA_RUTA_EXPORTAR.format(ruta=json_),
+    ]
+    lineas = csv_.read_text(encoding="utf-8-sig").splitlines()
+    assert lineas[0] == "ActivityObjectId,StartDate,EndDate,SpreadField,Valor,Acumulado"
+    assert len(lineas) == 4
+    respuesta = json.loads(leer_fixture("activity_spread_ok.json"))
+    assert json.loads(json_.read_text(encoding="utf-8")) == respuesta
+    salida = capsys.readouterr().out
+    assert messages.EXPORTADO.format(ruta=csv_, cantidad="3", unidad="filas") in salida
+    assert messages.EXPORTADO.format(ruta=json_, cantidad="2", unidad="objetos") in salida
+    assert llamadas_a(http_simulado, "GET", RUTA_SPREAD) == 1
 
 
 def test_spread_cancelar_vuelve_al_menu_de_endpoints(

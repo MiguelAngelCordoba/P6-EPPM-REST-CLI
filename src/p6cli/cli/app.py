@@ -48,7 +48,14 @@ from p6cli.core.errors import (
     SecretStoreError,
     UsageError,
 )
-from p6cli.core.export import leer_ids
+from p6cli.core.export import (
+    Formato,
+    escribir_csv,
+    escribir_json,
+    filas_spread_largo,
+    formato_de_ruta,
+    leer_ids,
+)
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import Sesion
 
@@ -244,6 +251,7 @@ OpcionEnv = Annotated[str | None, typer.Option("--env", help=messages.AYUDA_OPCI
 OpcionMaxRows = Annotated[
     int, typer.Option("--max-rows", min=0, help=messages.AYUDA_OPCION_MAX_ROWS)
 ]
+OpcionOutput = Annotated[Path | None, typer.Option("--output", help=messages.AYUDA_OPCION_OUTPUT)]
 
 
 def _endpoint_entity(clave: str) -> Endpoint:
@@ -309,10 +317,36 @@ def campos(endpoint: ArgumentoEndpoint, env: OpcionEnv = None) -> None:
         render.lista_campos(destino.key, lista)
 
 
+def _formato_salida(output: Path | None, como_json: bool) -> Formato | None:
+    """Formato de ``--output`` según su extensión; se valida antes de pedir la clave."""
+    if output is None:
+        return None
+    if como_json:
+        raise UsageError(MotivoUso.JSON_CON_OUTPUT)
+    return formato_de_ruta(output)
+
+
 def _imprimir_filas(
-    filas: list[Fila], columnas: list[str], max_rows: int, encabezado: str, como_json: bool
+    filas: list[Fila],
+    columnas: list[str],
+    max_rows: int,
+    encabezado: str,
+    como_json: bool,
+    output: Path | None,
 ) -> None:
-    """Tabla con las primeras ``max_rows`` filas o, con ``--json``, la lista completa."""
+    """Tabla con las primeras ``max_rows`` filas; con ``--json``, la lista completa.
+
+    Con ``--output`` se escribe el archivo en lugar de mostrar los datos: solo se imprimen
+    el encabezado y la ruta escrita (con sufijo si el archivo ya existía).
+    """
+    if output is not None:
+        if formato_de_ruta(output) is Formato.JSON:
+            escrita = escribir_json(output, filas)
+        else:
+            escrita = escribir_csv(output, filas, columnas)
+        render.titulo_resultados(encabezado)
+        render.exportado(escrita, len(filas))
+        return
     if como_json:
         typer.echo(json.dumps(filas, indent=2, ensure_ascii=False))
         return
@@ -331,6 +365,7 @@ def get(
     ] = False,
     max_rows: OpcionMaxRows = render.FILAS_TABLA,
     como_json: Annotated[bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON)] = False,
+    output: OpcionOutput = None,
 ) -> None:
     """Lectura simple. Valida todo antes de pedir la clave y de hacer el login."""
     with _errores_a_salida():
@@ -338,13 +373,15 @@ def get(
         perfil = _perfil(env)
         params = {FIELDS: fields, FILTER: filtro, ORDER_BY: orden}
         consulta = validar_consulta(perfil, destino, params, allow_unfiltered=allow_unfiltered)
+        _formato_salida(output, como_json)
         clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
         inicio = time.perf_counter()
         with Sesion(perfil, clave) as sesion, _esperando():
             filas = Cliente(sesion).get(destino, params, allow_unfiltered=allow_unfiltered)
         segundos = time.perf_counter() - inicio
         encabezado = render.encabezado_resultados(destino.key, len(filas), segundos)
-        _imprimir_filas(filas, consulta[FIELDS].split(","), max_rows, encabezado, como_json)
+        columnas = consulta[FIELDS].split(",")
+        _imprimir_filas(filas, columnas, max_rows, encabezado, como_json, output)
 
 
 @app.command("get-all", help=messages.AYUDA_GET_ALL)
@@ -358,6 +395,7 @@ def get_all(
     env: OpcionEnv = None,
     max_rows: OpcionMaxRows = render.FILAS_TABLA,
     como_json: Annotated[bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON)] = False,
+    output: OpcionOutput = None,
 ) -> None:
     """Lectura masiva por lotes. Valida todo antes de pedir la clave y de hacer el login."""
     with _errores_a_salida():
@@ -365,13 +403,15 @@ def get_all(
         perfil = _perfil(env)
         params = {FIELDS: fields, FILTER: filtro}
         consulta = validar_lectura_masiva(perfil, destino, params)
+        _formato_salida(output, como_json)
         clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
         inicio = time.perf_counter()
         with Sesion(perfil, clave) as sesion, render.progreso_lotes(stderr=True) as avisar:
             filas = Cliente(sesion).get_all(destino, params, tamano_lote=chunk, on_progress=avisar)
         segundos = time.perf_counter() - inicio
         encabezado = render.encabezado_resultados(destino.key, len(filas), segundos)
-        _imprimir_filas(filas, consulta[FIELDS].split(","), max_rows, encabezado, como_json)
+        columnas = consulta[FIELDS].split(",")
+        _imprimir_filas(filas, columnas, max_rows, encabezado, como_json, output)
 
 
 def _endpoint_spread(clave: str) -> Endpoint:
@@ -414,6 +454,9 @@ def spread(
     como_json: Annotated[
         bool, typer.Option("--json", help=messages.AYUDA_OPCION_JSON_SPREAD)
     ] = False,
+    output: Annotated[
+        Path | None, typer.Option("--output", help=messages.AYUDA_OPCION_OUTPUT_SPREAD)
+    ] = None,
 ) -> None:
     """Series temporales por lotes de ObjectId. Valida todo antes de pedir la clave."""
     with _errores_a_salida():
@@ -428,6 +471,7 @@ def spread(
         }
         perfil = _perfil(env)
         lotes = validar_spread(perfil, destino, params)
+        formato = _formato_salida(output, como_json)
         clave = _clave(perfil, messages.AVISO_CLAVE_NO_GUARDADA_CONSULTA, err=True)
         inicio = time.perf_counter()
         with Sesion(perfil, clave) as sesion, render.progreso_lotes(stderr=True) as avisar:
@@ -436,11 +480,44 @@ def spread(
         if como_json:
             typer.echo(json.dumps(respuesta, indent=2, ensure_ascii=False))
             return
-        tabla = filas_por_periodo(respuesta, destino, lotes[0][SPREAD_FIELD].split(","))
+        campos = lotes[0][SPREAD_FIELD].split(",")
+        tabla = filas_por_periodo(respuesta, destino, campos)
         if tabla is None:
             encabezado = render.encabezado_resultados(destino.key, len(respuesta), segundos)
+        else:
+            periodos = len(tabla[1])
+            encabezado = render.encabezado_spread(destino.key, len(respuesta), periodos, segundos)
+        if output is not None and formato is not None:
+            _exportar_spread(output, formato, respuesta, destino, campos, encabezado)
+        elif tabla is None:
             render.aviso_sin_tabla(encabezado, messages.AVISO_SPREAD_SIN_TABLA)
-            return
-        columnas, filas = tabla
-        encabezado = render.encabezado_spread(destino.key, len(respuesta), len(filas), segundos)
-        render.tabla_resultados(filas, columnas, max_rows, encabezado)
+        else:
+            columnas, filas = tabla
+            render.tabla_resultados(filas, columnas, max_rows, encabezado)
+
+
+def _exportar_spread(
+    ruta: Path,
+    formato: Formato,
+    respuesta: list[Fila],
+    endpoint: Endpoint,
+    campos: list[str],
+    encabezado: str,
+) -> None:
+    """``--output`` de spread: JSON tal cual o CSV en formato largo.
+
+    Si la respuesta no tiene la forma esperada, el CSV no se escribe y se sale con 1.
+    """
+    if formato is Formato.JSON:
+        escrita = escribir_json(ruta, respuesta)
+        render.titulo_resultados(encabezado)
+        render.exportado(escrita, len(respuesta), messages.UNIDAD_OBJETO, messages.UNIDAD_OBJETOS)
+        return
+    largo = filas_spread_largo(respuesta, endpoint, campos)
+    if largo is None:
+        render.aviso_sin_tabla(encabezado, messages.AVISO_SPREAD_SIN_CSV)
+        raise typer.Exit(code=SALIDA_ERROR_P6)
+    columnas, filas = largo
+    escrita = escribir_csv(ruta, filas, columnas)
+    render.titulo_resultados(encabezado)
+    render.exportado(escrita, len(filas))

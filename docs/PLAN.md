@@ -19,7 +19,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M4 | Catálogo, cliente y comandos básicos | ✅ |
 | M5 | Flujo interactivo | ✅ |
 | M6 | Lecturas masivas y spread | ✅ |
-| M7 | Exportación | ⬜ |
+| M7 | Exportación | ✅ |
 | M8 | Modo automatización | ⬜ |
 | M9 | Portafolio y release v1.0.0 | ⬜ |
 
@@ -235,10 +235,30 @@ Especificación: §8.2 (`spread`), §9 (`get_all`, `get_spread`), §11.2.
 
 Especificación: §13.
 
-- [ ] `core/export.py`: CSV (`utf-8-sig`) y JSON.
-- [ ] Spread a CSV en formato largo según la estructura confirmada en M6.
-- [ ] Ruta por defecto con marca de tiempo y sin sobrescritura.
-- [ ] Opciones de exportación en el menú de resultados y `--output` en comandos.
+- [x] `core/export.py`: CSV (`utf-8-sig`) y JSON.
+- [x] Spread a CSV en formato largo según la estructura confirmada en M6.
+- [x] Ruta por defecto con marca de tiempo y sin sobrescritura.
+- [x] Opciones de exportación en el menú de resultados y `--output` en comandos.
+
+**Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §13 y §18):
+
+- CSV delimitado por coma (RFC 4180). En Excel en español se abre con Datos > Desde texto/CSV.
+- Spread en formato largo: `<ObjectId del endpoint>, StartDate, EndDate, SpreadField, Valor, Acumulado`; `Acumulado` vacío sin acumulados.
+- Nunca se sobrescribe, tampoco con `--output`: se agrega sufijo (`_2`, `_3`…) y se informa la ruta real.
+- El menú pregunta la ruta con la ruta por defecto ya escrita.
+- `--output` reemplaza la salida en pantalla (encabezado y ruta escrita); con `--json` o con otra extensión es error de uso (salida 2) antes del login.
+- Spread sin la forma esperada: CSV deshabilitado en el menú; `--output x.csv` sale con 1 sin escribir nada.
+
+**Validación manual (tú)** — contra productivo, solo lecturas acotadas:
+
+- [ ] `p6 get project --fields ObjectId,Id,Name --filter ... --output exports/prueba.csv`: abrir en Excel (Datos > Desde texto/CSV) y revisar tildes; repetir el comando para ver el sufijo `_2`.
+- [ ] `p6 spread spread.activity ... --output exports/spread.csv`: cargarlo en Power BI.
+- [ ] Menú: Exportar a CSV y a JSON aceptando la ruta por defecto, en una consulta `entity` y en un spread.
+
+**Ajustes tras la validación manual** (detalle en `ESPECIFICACION.md` §13 y §18):
+
+- El menú muestra la ruta completa (`<directorio de trabajo>\exports\<nombre>`) con *De acuerdo* · *Cambiar ruta*. *Cambiar ruta* pide solo la carpeta, como ruta completa; el nombre del archivo lo sigue poniendo el programa y la ruta nueva se vuelve a confirmar.
+- [ ] Probar *De acuerdo*, *Cambiar ruta* a otra carpeta (también una que no exista) y una ruta relativa (debe rechazarse).
 
 ---
 

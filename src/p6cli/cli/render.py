@@ -3,6 +3,7 @@
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from rich.columns import Columns
@@ -280,6 +281,25 @@ def json_resultados(filas: Sequence[Mapping[str, Any]]) -> None:
     texto = json.dumps(filas, indent=2, ensure_ascii=False)
     # Text sin resaltado: corchetes y % de los datos no se interpretan; sin cortes de línea.
     Console().print(Text(texto), soft_wrap=True, highlight=False)
+
+
+def titulo_resultados(texto: str) -> None:
+    """Solo el encabezado de resultados, p. ej. cuando los datos van a un archivo."""
+    Console().print(Text(texto, style="bold"))
+
+
+def exportado(
+    ruta: Path,
+    cantidad: int,
+    singular: str = messages.UNIDAD_FILA,
+    plural: str = messages.UNIDAD_FILAS,
+) -> None:
+    """«Exportado a exports/demo_activity_20260928-101500.csv (1.284 filas).»"""
+    texto = messages.EXPORTADO.format(
+        ruta=ruta, cantidad=numero(cantidad), unidad=_unidad(cantidad, singular, plural)
+    )
+    # Sin cortes de línea: la ruta debe poder copiarse tal cual.
+    Console().print(Text(texto), soft_wrap=True)
 
 
 # --- Flujo interactivo (§10 y §11) ------------------------------------------------

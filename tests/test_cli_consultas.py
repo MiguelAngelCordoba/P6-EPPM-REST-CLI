@@ -16,6 +16,7 @@ from p6cli.cli.app import app
 from p6cli.cli.prompter import PrompterTexto
 from p6cli.core import catalog, profiles, secrets
 from p6cli.core.diagnostics import EstadoDiagnostico
+from p6cli.core.errors import MotivoUso
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import token_autenticacion
 from tests.conftest import (
@@ -1031,3 +1032,180 @@ def test_ayuda_de_los_comandos_por_lotes(comando: str, opciones: list[str]) -> N
     ayuda = re.sub(r"\x1b\[[0-9;]*m", "", resultado.output)
     for opcion in opciones:
         assert opcion in ayuda
+
+
+# --- --output (§13) -------------------------------------------------------------------
+
+
+def exportado(ruta: Path, cantidad: str) -> str:
+    return messages.EXPORTADO.format(ruta=ruta, cantidad=cantidad, unidad="filas")
+
+
+@pytest.mark.parametrize("comando", ["get", "get-all", "spread"])
+def test_ayuda_menciona_output(comando: str) -> None:
+    ayuda = re.sub(r"\x1b\[[0-9;]*m", "", p6(comando, "--help").output)
+
+    assert "--output" in ayuda
+
+
+def test_get_output_csv_escribe_el_archivo_sin_tabla(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear()
+    registrar(http_simulado, "/activity", ACTIVIDADES)
+    ruta = tmp_path / "salida" / "actividades.csv"
+
+    resultado = get_actividades("--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    assert f"activity · {len(FILAS_FIXTURE)} filas · " in resultado.stdout
+    assert exportado(ruta, str(len(FILAS_FIXTURE))) in resultado.stdout
+    assert "A1010" not in resultado.stdout  # sin tabla
+    lineas = ruta.read_text(encoding="utf-8-sig").splitlines()
+    assert lineas[0] == "ObjectId,Id,Name"
+    assert len(lineas) == len(FILAS_FIXTURE) + 1
+    assert llamadas(http_simulado, "POST", "/logout") == 1
+
+
+def test_get_output_json_con_la_lista_completa(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear()
+    registrar(http_simulado, "/activity", ACTIVIDADES)
+    ruta = tmp_path / "actividades.JSON"
+
+    resultado = get_actividades("--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    assert json.loads(ruta.read_text(encoding="utf-8")) == FILAS_FIXTURE
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--output", "actividades.xlsx"], ["--output", "actividades.csv", "--json"]],
+)
+def test_get_output_invalido_sale_con_2_sin_pedir_la_clave(
+    http_simulado: responses.RequestsMock, tmp_path: Path, extra: list[str]
+) -> None:
+    crear(clave=None)
+    destino = tmp_path / "salida"
+    extra = [str(destino / valor) if valor.startswith("actividades") else valor for valor in extra]
+
+    resultado = get_actividades(*extra)
+
+    assert resultado.exit_code == 2
+    assert messages.PEDIR_CLAVE_TEMPORAL not in resultado.output
+    assert len(http_simulado.calls) == 0
+    assert not destino.exists()
+
+
+def test_get_output_con_json_explica_el_conflicto(tmp_path: Path) -> None:
+    crear()
+
+    resultado = get_actividades("--json", "--output", str(tmp_path / "a.csv"))
+
+    assert resultado.exit_code == 2
+    assert messages.ERRORES[MotivoUso.JSON_CON_OUTPUT] in resultado.stderr
+
+
+def test_get_output_existente_agrega_sufijo(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear()
+    registrar(http_simulado, "/activity", ACTIVIDADES)
+    ruta = tmp_path / "actividades.csv"
+    ruta.write_text("original", encoding="utf-8")
+
+    resultado = get_actividades("--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    nueva = tmp_path / "actividades_2.csv"
+    assert exportado(nueva, str(len(FILAS_FIXTURE))) in resultado.stdout
+    assert ruta.read_text(encoding="utf-8") == "original"
+    assert nueva.exists()
+
+
+def test_get_output_no_escribible_sale_con_2(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear()
+    registrar(http_simulado, "/activity", ACTIVIDADES)
+    (tmp_path / "archivo").write_text("", encoding="utf-8")
+
+    resultado = get_actividades("--output", str(tmp_path / "archivo" / "a.csv"))
+
+    assert resultado.exit_code == 2
+    assert "No se pudo escribir el archivo" in resultado.stderr
+
+
+def test_get_all_output_csv(http_simulado: responses.RequestsMock, tmp_path: Path) -> None:
+    crear_lotes()
+    registrar_get_all(http_simulado)
+    ruta = tmp_path / "lotes.csv"
+
+    resultado = get_all_actividades("--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    assert exportado(ruta, "3") in resultado.stdout
+    assert ruta.read_bytes().decode("utf-8-sig") == (
+        "ObjectId,Id\r\n1001,A1001\r\n1002,A1002\r\n1003,A1003\r\n"
+    )
+
+
+def test_spread_output_csv_en_formato_largo(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", SPREAD_OK)
+    ruta = tmp_path / "spread.csv"
+
+    resultado = spread_actividades("--ids", "4835,4845", "--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    assert "spread.activity · 2 objetos · 3 períodos · " in resultado.stdout
+    assert exportado(ruta, "3") in resultado.stdout
+    lineas = ruta.read_text(encoding="utf-8-sig").splitlines()
+    assert lineas[0] == "ActivityObjectId,StartDate,EndDate,SpreadField,Valor,Acumulado"
+    assert lineas[3] == "4845,2026-01-12T00:00:00,2026-01-18T23:59:59,PlannedLaborUnits,16.0,16.0"
+
+
+def test_spread_output_json_tal_cual(http_simulado: responses.RequestsMock, tmp_path: Path) -> None:
+    crear_lotes()
+    registrar_respuestas(http_simulado, "/spread/activitySpread", SPREAD_OK)
+    ruta = tmp_path / "spread.json"
+
+    resultado = spread_actividades("--ids", "4835,4845", "--output", str(ruta))
+
+    assert resultado.exit_code == 0, resultado.output
+    unidad = messages.UNIDAD_OBJETOS
+    assert messages.EXPORTADO.format(ruta=ruta, cantidad="2", unidad=unidad) in resultado.stdout
+    respuesta = json.loads(leer_fixture("activity_spread_ok.json"))
+    assert json.loads(ruta.read_text(encoding="utf-8")) == respuesta
+
+
+def test_spread_output_csv_con_forma_inesperada_sale_con_1_sin_archivo(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear_lotes()
+    registrar_respuestas(
+        http_simulado, "/spread/activitySpread", json_simulado([{"Otra": "forma"}])
+    )
+
+    destino = tmp_path / "salida"
+
+    resultado = spread_actividades("--ids", "4835", "--output", str(destino / "spread.csv"))
+
+    assert resultado.exit_code == 1
+    assert messages.AVISO_SPREAD_SIN_CSV in resultado.stderr
+    assert not destino.exists()
+
+
+def test_spread_output_invalido_sale_con_2_sin_peticiones(
+    http_simulado: responses.RequestsMock, tmp_path: Path
+) -> None:
+    crear_lotes()
+
+    resultado = spread_actividades("--ids", "4835", "--output", str(tmp_path / "spread.txt"))
+
+    assert resultado.exit_code == 2
+    assert len(http_simulado.calls) == 0
