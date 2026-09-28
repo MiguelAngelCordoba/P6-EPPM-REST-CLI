@@ -21,7 +21,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M6 | Lecturas masivas y spread | ✅ |
 | M7 | Exportación | ✅ |
 | M8 | Modo automatización | Descartado |
-| M9 | Portafolio y release v1.0.0 | ✅ (falta publicar el tag y la release) |
+| M9 | Portafolio y release v1.0.0 | ✅ |
 
 ---
 
@@ -290,7 +290,7 @@ Limpieza de lo que ya existía de ese modo:
 - [x] `CHANGELOG.md`.
 - [x] Revisión final: ningún dato de clientes en el código, los docs **ni el historial de git**.
 - [x] Versión `1.0.0` en `src/p6cli/__init__.py`.
-- [ ] Tag `v1.0.0` y release en GitHub (tras el merge a `main`).
+- [x] Tag `v1.0.0` y release en GitHub (publicada el 2026-09-28).
 - [x] Pasar el repositorio a público: hecho el 2026-09-24, antes de M2, por decisión de la empresa.
 
 **Decisiones tomadas antes de iniciar** (detalle en `ESPECIFICACION.md` §18):
