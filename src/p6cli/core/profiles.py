@@ -30,18 +30,15 @@ from p6cli.core.errors import (
 )
 
 PATRON_NOMBRE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
-NOMBRES_RESERVADOS = frozenset({"env"})
 
 _PATRON_HOST = re.compile(r"https?://[^/\s?#@]+")
 _PATRON_CONTEXTO = re.compile(r"[^/\s?#]+")
 
 
 def validar_nombre(nombre: str) -> None:
-    """Lanza ``ProfileError`` si el nombre no es válido o está reservado."""
+    """Lanza ``ProfileError`` si el nombre no es válido."""
     if not PATRON_NOMBRE.fullmatch(nombre):
         raise ProfileError(MotivoPerfil.NOMBRE_INVALIDO, nombre=nombre)
-    if nombre in NOMBRES_RESERVADOS:
-        raise ProfileError(MotivoPerfil.NOMBRE_RESERVADO, nombre=nombre)
 
 
 def _es_entero(valor: object) -> bool:

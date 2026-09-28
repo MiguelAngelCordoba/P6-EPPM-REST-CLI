@@ -46,7 +46,7 @@ p6-eppm-rest-cli/
 │   ├── __init__.py            # __version__
 │   ├── __main__.py            # permite python -m p6cli
 │   ├── core/
-│   │   ├── config.py          # rutas de configuración y modo por variables de entorno
+│   │   ├── config.py          # rutas de configuración
 │   │   ├── profiles.py        # modelo Profile y ProfileStore (TOML)
 │   │   ├── secrets.py         # envoltorio de keyring
 │   │   ├── urls.py            # normalización de la URL pegada por el usuario
@@ -67,7 +67,6 @@ p6-eppm-rest-cli/
 ├── docs/
 ├── .claude/
 ├── pyproject.toml
-├── env.example
 ├── .gitignore
 ├── CLAUDE.md
 └── README.md
@@ -88,7 +87,7 @@ p6-eppm-rest-cli/
 
 | Campo | Tipo | Por defecto | Notas |
 |---|---|---|---|
-| `name` | str | — | Identidad del perfil. Patrón `^[a-z0-9][a-z0-9-]{0,31}$`. `env` está reservado (§15) |
+| `name` | str | — | Identidad del perfil. Patrón `^[a-z0-9][a-z0-9-]{0,31}$` |
 | `host` | str | — | Esquema + host + puerto opcional, sin ruta. Ej. `https://localhost:7001` |
 | `context` | str | `p6ws` | Contexto web de Web Services |
 | `database_name` | str | — | Alias de la instancia |
@@ -127,7 +126,7 @@ throttle_seconds = 0.5
 - Servicio keyring: `p6cli`. Usuario keyring: el `name` del perfil.
 - Operaciones: guardar, leer, borrar, renombrar (copiar a la nueva clave y borrar la anterior).
 - Eliminar un perfil elimina también su secreto.
-- Si no hay backend de keyring disponible, error claro sugiriendo el modo por variables de entorno (§15).
+- Si no hay backend de keyring disponible, error claro (salida 2): p6 lo necesita para leer y guardar claves.
 - La contraseña se muestra siempre como `••••••••`, sin revelar su longitud.
 
 ---
@@ -518,21 +517,9 @@ Ningún mensaje ni excepción contiene contraseñas ni valores de `authToken`.
 
 ---
 
-## 15. Modo automatización por variables de entorno
+## 15. Modo por variables de entorno — descartado
 
-Para ejecuciones sin perfiles guardados (tareas programadas, servidores). Se usa con `--env env`:
-
-| Variable | Obligatoria | Equivale a |
-|---|---|---|
-| `P6CLI_HOST` | sí | `host` o URL completa (se normaliza, §5) |
-| `P6CLI_CONTEXT` | no | `context` |
-| `P6CLI_DATABASE_NAME` | sí | `database_name` |
-| `P6CLI_USERNAME` | sí | `username` |
-| `P6CLI_PASSWORD` | sí | contraseña |
-| `P6CLI_VERIFY_SSL` | no | `verify_ssl` |
-| `P6CLI_CONFIG_DIR` | no | directorio de configuración (§4.2) |
-
-El programa **no** carga archivos `.env`; las variables las define el sistema o el orquestador. `env.example` documenta los nombres.
+Se descartó en el hito M8 porque no aplica: el programa está pensado para uso manual. No existe en la v1: no hay perfil `env` ni variables `P6CLI_*` para credenciales, y las claves solo se guardan en el keyring (§4.3). `P6CLI_CONFIG_DIR` (§4.2) se mantiene. Ver §18.
 
 ---
 
@@ -662,3 +649,4 @@ El programa **no** carga archivos `.env`; las variables las define el sistema o 
 | Un resultado vacío se exporta igual: CSV solo con encabezado, JSON `[]` | El archivo documenta las columnas pedidas |
 | Spread cuya respuesta no tiene la forma esperada: en el menú, «Exportar a CSV» deshabilitado con el motivo y JSON habilitado; con `--output x.csv` no se escribe nada, se avisa que use `.json` y sale con 1 | No se exporta a medias algo que no se pudo aplanar |
 | Un error al escribir (permisos, carpeta inexistente que no se puede crear…) es `UsageError` (salida 2) con la ruta y el tipo de excepción, lanzado sin la excepción original; se borra el archivo parcial. En el menú se muestra y se vuelve a «¿Qué sigue?» | Mismo criterio que `leer_ids`: el mensaje de la excepción no llega al usuario |
+| Se descarta el hito M8 (modo por variables de entorno, §15): no hay perfil `env` ni `env.example`, y `env` deja de ser un nombre reservado. Sin backend de keyring, el error ya no remite a ese modo | No aplica: el programa está pensado para uso manual. Además, las variables de entorno exponen la clave a otros procesos y a logs; el keyring es más seguro |

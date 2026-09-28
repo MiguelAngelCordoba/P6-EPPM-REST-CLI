@@ -52,7 +52,7 @@ def store(dir_config: Path) -> ProfileStore:
 # --- Nombre -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("nombre", ["demo", "a", "cliente-prod", "0x", "a" * 32])
+@pytest.mark.parametrize("nombre", ["demo", "a", "cliente-prod", "0x", "a" * 32, "env"])
 def test_nombres_validos(nombre: str) -> None:
     profiles.validar_nombre(nombre)
 
@@ -65,13 +65,6 @@ def test_nombres_invalidos(nombre: str) -> None:
         profiles.validar_nombre(nombre)
 
     assert error.value.motivo is MotivoPerfil.NOMBRE_INVALIDO
-
-
-def test_env_esta_reservado() -> None:
-    with pytest.raises(ProfileError) as error:
-        profiles.validar_nombre("env")
-
-    assert error.value.motivo is MotivoPerfil.NOMBRE_RESERVADO
 
 
 # --- Modelo -----------------------------------------------------------------

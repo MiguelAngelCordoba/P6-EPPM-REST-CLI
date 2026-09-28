@@ -620,9 +620,6 @@ ERRORES: dict[StrEnum, str] = {
         "Nombre «{nombre}» no válido: usa minúsculas, dígitos y guiones, empieza con letra o "
         "dígito y no pases de 32 caracteres."
     ),
-    MotivoPerfil.NOMBRE_RESERVADO: (
-        "El nombre «{nombre}» está reservado para el modo por variables de entorno."
-    ),
     MotivoPerfil.CAMPO_INVALIDO: "El perfil «{perfil}» tiene un valor no válido en «{campo}».",
     MotivoPerfil.NO_EXISTE: "No existe el perfil «{nombre}».",
     MotivoPerfil.YA_EXISTE: "Ya existe un perfil llamado «{nombre}».",
@@ -710,9 +707,9 @@ ERRORES: dict[StrEnum, str] = {
         "Agrega --filter."
     ),
     MotivoSecreto.SIN_BACKEND: (
-        "No hay un almacén de credenciales (keyring) disponible en este sistema. "
-        "Usa el modo por variables de entorno: define P6CLI_HOST, P6CLI_DATABASE_NAME, "
-        "P6CLI_USERNAME y P6CLI_PASSWORD (ver env.example) y ejecuta con --env env."
+        "No hay un almacén de credenciales (keyring) disponible en este sistema; p6 lo "
+        "necesita para leer y guardar claves. Windows y macOS lo traen; en Linux se necesita "
+        "Secret Service (p. ej. GNOME Keyring o KWallet)."
     ),
     MotivoSecreto.ERROR_KEYRING: "El almacén de credenciales del sistema falló ({tipo}).",
 }

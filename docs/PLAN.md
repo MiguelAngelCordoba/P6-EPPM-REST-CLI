@@ -20,7 +20,7 @@ Cada hito cabe en una sesión de Claude Code. Se trabajan en orden: cada uno se 
 | M5 | Flujo interactivo | ✅ |
 | M6 | Lecturas masivas y spread | ✅ |
 | M7 | Exportación | ✅ |
-| M8 | Modo automatización | ⬜ |
+| M8 | Modo automatización | Descartado |
 | M9 | Portafolio y release v1.0.0 | ⬜ |
 
 ---
@@ -262,13 +262,23 @@ Especificación: §13.
 
 ---
 
-## M8 — Modo automatización
+## M8 — Modo automatización (descartado)
 
 Especificación: §15.
 
-- [ ] Perfil efímero `env` a partir de variables `P6CLI_*`.
-- [ ] `env.example` actualizado.
-- [ ] Tests con variables simuladas.
+**Se descarta el hito M8 porque no aplica: el programa está pensado para uso manual.** Las claves se guardan solo en el keyring; un modo con la clave en variables de entorno sería menos seguro y no aporta al uso real (detalle en `ESPECIFICACION.md` §15 y §18).
+
+Tareas originales, que no se harán:
+
+- ~~Perfil efímero `env` a partir de variables `P6CLI_*`.~~
+- ~~`env.example` actualizado.~~
+- ~~Tests con variables simuladas.~~
+
+Limpieza de lo que ya existía de ese modo:
+
+- [x] `env` deja de ser un nombre de perfil reservado (`profiles.py`, `errors.py`, `messages.py`, test).
+- [x] El error «keyring no disponible» ya no remite a `--env env`.
+- [x] Se elimina `env.example`; §3, §4.1, §4.3 y §15 de la especificación quedan sin referencias al modo.
 
 ---
 

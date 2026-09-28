@@ -1,4 +1,4 @@
-"""Rutas de configuración y modo por variables de entorno."""
+"""Rutas de configuración."""
 
 import os
 from pathlib import Path

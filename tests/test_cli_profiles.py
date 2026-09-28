@@ -9,6 +9,7 @@ from typer.testing import CliRunner, Result
 from p6cli.cli import messages
 from p6cli.cli.app import app
 from p6cli.core import profiles, secrets
+from p6cli.core.errors import MotivoSecreto
 from p6cli.core.profiles import Profile, ProfileStore
 from tests.conftest import LOGIN_OK, LOGIN_RECHAZADO, Simulada, llamadas, registrar_p6
 
@@ -319,7 +320,8 @@ def test_add_sin_backend_sale_con_2_y_no_guarda(keyring_sin_backend: None) -> No
     resultado = invocar("add", entrada=ALTA_DEMO)
 
     assert resultado.exit_code == 2
-    assert "P6CLI_" in resultado.output
+    assert messages.ERRORES[MotivoSecreto.SIN_BACKEND] in resultado.output
+    assert "P6CLI_" not in resultado.output
     assert ProfileStore().listar() == []
 
 

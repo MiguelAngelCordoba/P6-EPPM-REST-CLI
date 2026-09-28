@@ -23,7 +23,6 @@ class MotivoPerfil(StrEnum):
     """Motivos de un error de perfil."""
 
     NOMBRE_INVALIDO = "nombre_invalido"
-    NOMBRE_RESERVADO = "nombre_reservado"
     CAMPO_INVALIDO = "campo_invalido"
     NO_EXISTE = "no_existe"
     YA_EXISTE = "ya_existe"

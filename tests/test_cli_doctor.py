@@ -8,6 +8,7 @@ from p6cli.cli import messages
 from p6cli.cli.app import app
 from p6cli.core import profiles, secrets
 from p6cli.core.diagnostics import EstadoDiagnostico
+from p6cli.core.errors import MotivoSecreto
 from p6cli.core.profiles import Profile, ProfileStore
 from p6cli.core.session import token_autenticacion
 from tests.conftest import (
@@ -154,7 +155,8 @@ def test_sin_backend_de_keyring_sale_con_2(keyring_sin_backend: None) -> None:
     resultado = doctor("demo")
 
     assert resultado.exit_code == 2
-    assert "P6CLI_" in resultado.output
+    assert messages.ERRORES[MotivoSecreto.SIN_BACKEND] in resultado.output
+    assert "P6CLI_" not in resultado.output
 
 
 @pytest.mark.parametrize(
