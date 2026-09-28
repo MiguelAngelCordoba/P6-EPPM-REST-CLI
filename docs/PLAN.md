@@ -251,14 +251,14 @@ Especificación: §13.
 
 **Validación manual (tú)** — contra productivo, solo lecturas acotadas:
 
-- [ ] `p6 get project --fields ObjectId,Id,Name --filter ... --output exports/prueba.csv`: abrir en Excel (Datos > Desde texto/CSV) y revisar tildes; repetir el comando para ver el sufijo `_2`.
-- [ ] `p6 spread spread.activity ... --output exports/spread.csv`: cargarlo en Power BI.
-- [ ] Menú: Exportar a CSV y a JSON aceptando la ruta por defecto, en una consulta `entity` y en un spread.
+- [x] `p6 get project --fields ObjectId,Id,Name --filter ... --output exports/prueba.csv`: abrir en Excel (Datos > Desde texto/CSV) y revisar tildes; repetir el comando para ver el sufijo `_2`.
+- [x] `p6 spread spread.activity ... --output exports/spread.csv`: cargarlo en Power BI.
+- [x] Menú: Exportar a CSV y a JSON aceptando la ruta por defecto, en una consulta `entity` y en un spread.
 
 **Ajustes tras la validación manual** (detalle en `ESPECIFICACION.md` §13 y §18):
 
 - El menú muestra la ruta completa (`<directorio de trabajo>\exports\<nombre>`) con *De acuerdo* · *Cambiar ruta*. *Cambiar ruta* pide solo la carpeta, como ruta completa; el nombre del archivo lo sigue poniendo el programa y la ruta nueva se vuelve a confirmar.
-- [ ] Probar *De acuerdo*, *Cambiar ruta* a otra carpeta (también una que no exista) y una ruta relativa (debe rechazarse).
+- [x] Probar *De acuerdo*, *Cambiar ruta* a otra carpeta (también una que no exista) y una ruta relativa (debe rechazarse).
 
 ---
 
